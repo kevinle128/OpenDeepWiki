@@ -20,6 +20,8 @@ public class WikiLanguageNamesTests
     [InlineData("ru", "Russian")]
     [InlineData("ar", "Arabic")]
     [InlineData("it", "Italian")]
+    [InlineData("vi", "Vietnamese")]
+    [InlineData("vi-VN", "Vietnamese")]
     [InlineData(null, "English")]
     [InlineData("", "English")]
     public void GetEnglishName_ShouldMapKnownCodes(string? code, string expected)
@@ -34,24 +36,12 @@ public class WikiLanguageNamesTests
     }
 
     [Fact]
-    public void GetTranslationLanguages_ShouldExcludePrimaryAndKeepNewDefaults()
+    public void GetTranslationLanguages_ShouldUseEnglishAndVietnameseOnly()
     {
         var options = new WikiGeneratorOptions();
 
-        var languages = options.GetTranslationLanguages("en");
-
-        Assert.DoesNotContain("en", languages);
-        Assert.Contains("zh", languages);
-        Assert.Contains("zh-tw", languages);
-        Assert.Contains("ja", languages);
-        Assert.Contains("ko", languages);
-        Assert.Contains("es", languages);
-        Assert.Contains("fr", languages);
-        Assert.Contains("de", languages);
-        Assert.Contains("pt-br", languages);
-        Assert.Contains("pl", languages);
-        Assert.Contains("ru", languages);
-        Assert.Contains("ar", languages);
-        Assert.Equal(11, languages.Count);
+        Assert.Equal("en,vi", options.Languages);
+        Assert.Equal(["vi"], options.GetTranslationLanguages("en"));
+        Assert.Equal(["en"], options.GetTranslationLanguages("vi"));
     }
 }

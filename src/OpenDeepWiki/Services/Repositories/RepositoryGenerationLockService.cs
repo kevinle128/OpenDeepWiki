@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Options;
 using OpenDeepWiki.EFCore;
 using OpenDeepWiki.Entities;
@@ -6,11 +7,23 @@ using OpenDeepWiki.Services.Wiki;
 
 namespace OpenDeepWiki.Services.Repositories;
 
+/// <summary>
+/// Generation locks of repositories and branches.
+/// A repository-scope lock (no branch ID) excludes every other lock of the repository.
+/// A branch-scope lock excludes the repository lock and any other lock of the same branch,
+/// but not the locks of other branches. A scope must match its branch ID: repository scope has none,
+/// branch scope has one.
+/// </summary>
 public interface IRepositoryGenerationLockService
 {
+    /// <summary>
+    /// Returns the lock that blocks the request. With a branch ID this is the repository lock or that branch's lock.
+    /// Without one it is any lock of the repository, a repository-scope lock first.
+    /// </summary>
     Task<RepositoryGenerationLock?> GetLockAsync(
         string repositoryId,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        string? branchId = null);
 
     Task<bool> TryAcquireAsync(
         IContext context,
@@ -19,28 +32,35 @@ public interface IRepositoryGenerationLockService
         string ownerId,
         RepositoryGenerationLockScope scope,
         CancellationToken cancellationToken = default,
-        bool bindToCurrentInstance = false);
+        bool bindToCurrentInstance = false,
+        string? branchId = null);
 
+    /// <param name="branchId">When set, only the lock of that branch matches.</param>
     Task HeartbeatAsync(
         IContext context,
         string repositoryId,
         RepositoryGenerationLockOwnerType ownerType,
         string ownerId,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        string? branchId = null);
 
+    /// <param name="branchId">When set, only the lock of that branch matches.</param>
     Task UnbindAsync(
         IContext context,
         string repositoryId,
         RepositoryGenerationLockOwnerType ownerType,
         string ownerId,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        string? branchId = null);
 
+    /// <param name="branchId">When set, only the lock of that branch matches.</param>
     Task ReleaseAsync(
         IContext context,
         string repositoryId,
         RepositoryGenerationLockOwnerType ownerType,
         string ownerId,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        string? branchId = null);
 
     Task RecoverStaleLocksAsync(
         IContext context,
@@ -70,11 +90,15 @@ public sealed class RepositoryGenerationLockService : IRepositoryGenerationLockS
 
     public Task<RepositoryGenerationLock?> GetLockAsync(
         string repositoryId,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? branchId = null)
     {
         return _rootContext.RepositoryGenerationLocks
             .AsNoTracking()
-            .FirstOrDefaultAsync(item => item.RepositoryId == repositoryId && !item.IsDeleted, cancellationToken);
+            .Where(item => item.RepositoryId == repositoryId && !item.IsDeleted)
+            .Where(item => branchId == null || item.BranchId == null || item.BranchId == branchId)
+            .OrderBy(item => item.BranchId != null)
+            .FirstOrDefaultAsync(cancellationToken);
     }
 
     public async Task<bool> TryAcquireAsync(
@@ -84,14 +108,73 @@ public sealed class RepositoryGenerationLockService : IRepositoryGenerationLockS
         string ownerId,
         RepositoryGenerationLockScope scope,
         CancellationToken cancellationToken = default,
-        bool bindToCurrentInstance = false)
+        bool bindToCurrentInstance = false,
+        string? branchId = null)
     {
-        var existing = await context.RepositoryGenerationLocks
-            .FirstOrDefaultAsync(item => item.RepositoryId == repositoryId && !item.IsDeleted, cancellationToken);
+        ValidateScope(scope, branchId);
+
+        // The filtered unique indexes only stop two locks with the same key. Whether a repository lock and a
+        // branch lock may coexist is decided here, so concurrent requests for one repository must run one
+        // after the other: the first statement takes a write lock on the repository row until commit.
+        await using var ownTransaction = await BeginOwnTransactionAsync(context, cancellationToken);
+        await SerializeRepositoryAsync(context, repositoryId, cancellationToken);
+
+        var acquired = await TryAcquireCoreAsync(
+            context, repositoryId, ownerType, ownerId, scope, bindToCurrentInstance, branchId, cancellationToken);
+
+        if (ownTransaction is not null)
+        {
+            if (acquired)
+            {
+                await ownTransaction.CommitAsync(cancellationToken);
+            }
+            else
+            {
+                await ownTransaction.RollbackAsync(CancellationToken.None);
+            }
+        }
+
+        return acquired;
+    }
+
+    private async Task<bool> TryAcquireCoreAsync(
+        IContext context,
+        string repositoryId,
+        RepositoryGenerationLockOwnerType ownerType,
+        string ownerId,
+        RepositoryGenerationLockScope scope,
+        bool bindToCurrentInstance,
+        string? branchId,
+        CancellationToken cancellationToken)
+    {
+        var locks = await context.RepositoryGenerationLocks
+            .Where(item => item.RepositoryId == repositoryId && !item.IsDeleted)
+            .ToListAsync(cancellationToken);
+
+        var existing = locks.FirstOrDefault(item => item.BranchId == branchId);
+        var blockers = locks
+            .Where(item => !ReferenceEquals(item, existing) && Excludes(branchId, item))
+            .ToList();
+
+        if (blockers.Any(blocker => !IsStale(blocker)))
+        {
+            return false;
+        }
+
+        if (blockers.Count > 0)
+        {
+            foreach (var blocker in blockers)
+            {
+                await RecoverLockWorkAsync(context, blocker, cancellationToken);
+                context.RepositoryGenerationLocks.Remove(blocker);
+            }
+
+            await context.SaveChangesAsync(cancellationToken);
+        }
 
         if (existing is null)
         {
-            var generationLock = CreateLock(repositoryId, ownerType, ownerId, scope, bindToCurrentInstance);
+            var generationLock = CreateLock(repositoryId, branchId, ownerType, ownerId, scope, bindToCurrentInstance);
             context.RepositoryGenerationLocks.Add(generationLock);
 
             try
@@ -138,12 +221,70 @@ public sealed class RepositoryGenerationLockService : IRepositoryGenerationLockS
         return false;
     }
 
+    /// <summary>
+    /// A repository-scope request (no branch ID) excludes every other lock of the repository.
+    /// A branch request excludes the repository-scope lock only; other branches stay independent.
+    /// The lock with the same key is handled separately as the lock to reuse.
+    /// </summary>
+    private static bool Excludes(string? requestedBranchId, RepositoryGenerationLock other)
+    {
+        return requestedBranchId is null || other.BranchId is null;
+    }
+
+    private static void ValidateScope(RepositoryGenerationLockScope scope, string? branchId)
+    {
+        if (scope == RepositoryGenerationLockScope.Branch && string.IsNullOrWhiteSpace(branchId))
+        {
+            throw new ArgumentException("A branch-scope lock needs a branch ID.", nameof(branchId));
+        }
+
+        if (scope == RepositoryGenerationLockScope.Repository && branchId is not null)
+        {
+            throw new ArgumentException("A repository-scope lock cannot have a branch ID.", nameof(branchId));
+        }
+    }
+
+    private static async Task<IDbContextTransaction?> BeginOwnTransactionAsync(
+        IContext context,
+        CancellationToken cancellationToken)
+    {
+        if (!EfContextCapabilities.SupportsExecuteUpdate(context) ||
+            context is not DbContext { Database.CurrentTransaction: null } dbContext)
+        {
+            return null;
+        }
+
+        return await dbContext.Database.BeginTransactionAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Updates the repository row to its own value. The row stays locked until the transaction ends,
+    /// so another acquire for the same repository waits and then sees this transaction's lock rows.
+    /// </summary>
+    private static async Task SerializeRepositoryAsync(
+        IContext context,
+        string repositoryId,
+        CancellationToken cancellationToken)
+    {
+        if (!EfContextCapabilities.SupportsExecuteUpdate(context) || context is not DbContext { Database.CurrentTransaction: not null })
+        {
+            return;
+        }
+
+        await context.Repositories
+            .Where(item => item.Id == repositoryId)
+            .ExecuteUpdateAsync(
+                setters => setters.SetProperty(item => item.UpdatedAt, item => item.UpdatedAt),
+                cancellationToken);
+    }
+
     public async Task HeartbeatAsync(
         IContext context,
         string repositoryId,
         RepositoryGenerationLockOwnerType ownerType,
         string ownerId,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? branchId = null)
     {
         var now = DateTime.UtcNow;
         var instanceId = _instanceIdentity.InstanceId;
@@ -155,6 +296,7 @@ public sealed class RepositoryGenerationLockService : IRepositoryGenerationLockS
                     item.RepositoryId == repositoryId &&
                     item.OwnerType == ownerType &&
                     item.OwnerId == ownerId &&
+                    (branchId == null || item.BranchId == branchId) &&
                     item.InstanceId == instanceId &&
                     !item.IsDeleted)
                 .ExecuteUpdateAsync(
@@ -170,6 +312,7 @@ public sealed class RepositoryGenerationLockService : IRepositoryGenerationLockS
                 item.RepositoryId == repositoryId &&
                 item.OwnerType == ownerType &&
                 item.OwnerId == ownerId &&
+                (branchId == null || item.BranchId == branchId) &&
                 item.InstanceId == instanceId &&
                 !item.IsDeleted,
                 cancellationToken);
@@ -189,13 +332,15 @@ public sealed class RepositoryGenerationLockService : IRepositoryGenerationLockS
         string repositoryId,
         RepositoryGenerationLockOwnerType ownerType,
         string ownerId,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? branchId = null)
     {
         var generationLock = await context.RepositoryGenerationLocks
             .FirstOrDefaultAsync(item =>
                 item.RepositoryId == repositoryId &&
                 item.OwnerType == ownerType &&
                 item.OwnerId == ownerId &&
+                (branchId == null || item.BranchId == branchId) &&
                 item.InstanceId == _instanceIdentity.InstanceId &&
                 !item.IsDeleted,
                 cancellationToken);
@@ -216,13 +361,15 @@ public sealed class RepositoryGenerationLockService : IRepositoryGenerationLockS
         string repositoryId,
         RepositoryGenerationLockOwnerType ownerType,
         string ownerId,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? branchId = null)
     {
         var generationLock = await context.RepositoryGenerationLocks
             .FirstOrDefaultAsync(item =>
                 item.RepositoryId == repositoryId &&
                 item.OwnerType == ownerType &&
                 item.OwnerId == ownerId &&
+                (branchId == null || item.BranchId == branchId) &&
                 !item.IsDeleted,
                 cancellationToken);
 
@@ -265,6 +412,7 @@ public sealed class RepositoryGenerationLockService : IRepositoryGenerationLockS
 
     private RepositoryGenerationLock CreateLock(
         string repositoryId,
+        string? branchId,
         RepositoryGenerationLockOwnerType ownerType,
         string ownerId,
         RepositoryGenerationLockScope scope,
@@ -275,6 +423,7 @@ public sealed class RepositoryGenerationLockService : IRepositoryGenerationLockS
         {
             Id = Guid.NewGuid().ToString(),
             RepositoryId = repositoryId,
+            BranchId = branchId,
             OwnerType = ownerType,
             OwnerId = ownerId,
             Scope = scope,

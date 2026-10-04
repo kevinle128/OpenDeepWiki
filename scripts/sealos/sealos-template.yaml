@@ -30,6 +30,9 @@ spec:
     web_name:
       type: string
       value: opendeepwiki-web-${{ random(8) }}
+    jwt_secret:
+      type: string
+      value: ${{ random(48) }}
     default_model:
       type: string
       value: gpt-4o
@@ -58,9 +61,9 @@ spec:
     
     # JWT 配置
     jwt_secret_key:
-      description: 'JWT 密钥（生产环境请务必修改）'
+      description: 'JWT 密钥（至少 32 字节；Production 环境拒绝内置默认值，默认随机生成，部署后请勿随意更换）'
       type: string
-      default: 'OpenDeepWiki-Default-Secret-Key-Please-Change-In-Production-Environment-2024'
+      default: ${{ defaults.jwt_secret }}
       required: true
     
     # 全局 AI 配置（用于 Chat 等功能）
@@ -193,6 +196,10 @@ spec:
             - name: JWT_SECRET_KEY
               value: ${{ inputs.jwt_secret_key }}
             
+            # Data Protection 密钥环 (必须位于持久卷: 丢失后所有已保存的 Git 凭据无法解密, 请与数据库一同备份)
+            - name: DataProtection__KeyRingPath
+              value: /data/dataprotection-keys
+
             # 仓库存储目录
             - name: REPOSITORIES_DIRECTORY
               value: /data

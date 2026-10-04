@@ -54,26 +54,27 @@ export default function AppDetailPage() {
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showRegenerateDialog, setShowRegenerateDialog] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
-
-  const fetchApp = useCallback(async () => {
-    if (!appId) return;
+  const [loadingAppId, setLoadingAppId] = useState(appId);
+  if (loadingAppId !== appId) {
+    setLoadingAppId(appId);
     setIsLoading(true);
-    setError(null);
-    try {
-      const data = await getAppById(appId);
+  }
+
+  const fetchApp = useCallback(() => {
+    if (!appId) return;
+    return getAppById(appId).then(data => {
       setApp(data);
-    } catch (err) {
+      setError(null);
+    }).catch(err => {
       setError(err instanceof Error ? err.message : "App not found");
-    } finally {
+    }).finally(() => {
       setIsLoading(false);
-    }
+    });
   }, [appId]);
 
   useEffect(() => {
     if (!authLoading && isAuthenticated) {
       fetchApp();
-    } else if (!authLoading && !isAuthenticated) {
-      setIsLoading(false);
     }
   }, [authLoading, isAuthenticated, fetchApp]);
 
@@ -119,6 +120,8 @@ export default function AppDetailPage() {
 
   const handleEditSuccess = () => {
     setIsFormOpen(false);
+    setIsLoading(true);
+    setError(null);
     fetchApp();
   };
 

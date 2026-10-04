@@ -42,7 +42,7 @@ import {
   FolderOpen,
   FileCode,
   FileText,
-  Image,
+  Image as ImageIcon,
   Package,
   ExternalLink,
 } from "lucide-react";
@@ -68,22 +68,25 @@ export default function AdminSkillsPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const t = useTranslations();
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const result = await getSkillConfigs();
+  const loadData = useCallback(() => {
+    return getSkillConfigs().then((result) => {
       setConfigs(result);
-    } catch (error) {
+    }).catch(error => {
       console.error("Failed to fetch Skill configs:", error);
       toast.error(t('admin.toast.fetchSkillFailed'));
-    } finally {
+    }).finally(() => {
       setLoading(false);
-    }
+    });
   }, [t]);
 
+  const fetchData = useCallback(() => {
+    setLoading(true);
+    return loadData();
+  }, [loadData]);
+
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    void loadData();
+  }, [loadData]);
 
   const handleUploadClick = () => {
     fileInputRef.current?.click();
@@ -118,7 +121,7 @@ export default function AdminSkillsPage() {
       const detail = await getSkillDetail(config.id);
       setSelectedDetail(detail);
       setDetailDialog(true);
-    } catch (error) {
+    } catch {
       toast.error(t('admin.toast.fetchDetailFailed'));
     }
   };
@@ -130,7 +133,7 @@ export default function AdminSkillsPage() {
       toast.success(t('admin.toast.deleteSuccess'));
       setDeleteId(null);
       fetchData();
-    } catch (error) {
+    } catch {
       toast.error(t('admin.toast.deleteFailed'));
     }
   };
@@ -140,7 +143,7 @@ export default function AdminSkillsPage() {
       await updateSkillConfig(config.id, { isActive: !config.isActive });
       toast.success(config.isActive ? t('admin.skills.disabled') : t('admin.skills.enabled'));
       fetchData();
-    } catch (error) {
+    } catch {
       toast.error(t('admin.toast.operationFailed'));
     }
   };
@@ -150,7 +153,7 @@ export default function AdminSkillsPage() {
       await refreshSkills();
       toast.success(t('admin.toast.refreshSuccess'));
       fetchData();
-    } catch (error) {
+    } catch {
       toast.error(t('admin.toast.refreshFailed'));
     }
   };
@@ -262,7 +265,7 @@ export default function AdminSkillsPage() {
                 )}
                 {config.hasAssets && (
                   <span className="inline-flex items-center gap-1 text-xs bg-orange-100 dark:bg-orange-900 text-orange-700 dark:text-orange-300 px-2 py-0.5 rounded">
-                    <Image className="h-3 w-3" /> assets
+                    <ImageIcon aria-hidden className="h-3 w-3" /> assets
                   </span>
                 )}
               </div>
@@ -382,7 +385,7 @@ export default function AdminSkillsPage() {
               {selectedDetail.assets.length > 0 && (
                 <div>
                   <h4 className="font-medium mb-2 flex items-center gap-2">
-                    <Image className="h-4 w-4" /> Assets ({selectedDetail.assets.length})
+                    <ImageIcon aria-hidden className="h-4 w-4" /> Assets ({selectedDetail.assets.length})
                   </h4>
                   <div className="space-y-1">
                     {selectedDetail.assets.map((file) => (

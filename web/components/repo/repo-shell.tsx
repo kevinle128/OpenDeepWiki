@@ -108,17 +108,13 @@ function SidebarTree({
   depth?: number;
 }) {
   const [expandedSlugs, setExpandedSlugs] = useState<Set<string>>(() => collectExpandableSlugs(nodes));
-
-  useEffect(() => {
+  const [previousTree, setPreviousTree] = useState({ nodes, currentPath });
+  if (previousTree.nodes !== nodes) {
+    setPreviousTree({ nodes, currentPath });
     setExpandedSlugs(collectExpandableSlugs(nodes));
-  }, [nodes]);
-
-  useEffect(() => {
+  } else if (previousTree.currentPath !== currentPath) {
+    setPreviousTree({ nodes, currentPath });
     const parentSlugs = collectParentSlugs(nodes, currentPath);
-    if (parentSlugs.size === 0) {
-      return;
-    }
-
     setExpandedSlugs((prev) => {
       let changed = false;
       const next = new Set(prev);
@@ -132,7 +128,7 @@ function SidebarTree({
 
       return changed ? next : prev;
     });
-  }, [currentPath, nodes]);
+  }
 
   const toggleExpand = (slug: string) => {
     setExpandedSlugs((prev) => {

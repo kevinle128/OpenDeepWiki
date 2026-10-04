@@ -9,13 +9,11 @@ export default function GitHubImportCallbackPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [error, setError] = useState<string | null>(null);
+  const installationId = searchParams.get("installation_id");
+  const displayedError = installationId ? error : "Missing installation_id parameter";
 
   useEffect(() => {
-    const installationId = searchParams.get("installation_id");
-    const setupAction = searchParams.get("setup_action");
-
     if (!installationId) {
-      setError("Missing installation_id parameter");
       return;
     }
 
@@ -29,12 +27,12 @@ export default function GitHubImportCallbackPage() {
     };
 
     storeAndRedirect();
-  }, [searchParams, router]);
+  }, [installationId, router]);
 
-  if (error) {
+  if (displayedError) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[400px] gap-4">
-        <p className="text-destructive text-lg">Error: {error}</p>
+        <p className="text-destructive text-lg">Error: {displayedError}</p>
         <button
           onClick={() => router.push("/admin/github-import")}
           className="text-primary underline"

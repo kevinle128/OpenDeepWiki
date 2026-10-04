@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import Image from "next/image"
 import { useTranslations } from "next-intl"
 import { MessageCircle, X } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -72,7 +73,7 @@ export function FloatingBall({
         <X className="h-6 w-6" />
       ) : iconUrl ? (
         // 自定义图标
-        <img
+        <Image unoptimized width={32} height={32}
           src={iconUrl}
           alt={t("assistant.title")}
           className="h-8 w-8 rounded-full object-cover"

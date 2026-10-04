@@ -56,6 +56,10 @@ cd OpenDeepWiki
 }
 ```
 
+<Callout type="info">
+  Development 环境不需要 `JWT_SECRET_KEY` 和 `DataProtection__KeyRingPath`。Production 环境需要：缺少它们，或 JWT 密钥短于 32 字节，应用启动失败并以退出码 1 结束。见[环境变量](/docs/configuration/environment-variables)。
+</Callout>
+
 你可能想设置的关键环境变量：
 
 ```bash
@@ -130,9 +134,11 @@ OpenDeepWiki/
 │   ├── components/                # React 组件
 │   ├── hooks/                     # 自定义 React hooks
 │   ├── lib/                       # API 客户端和工具
+│   ├── e2e/                       # Playwright 端到端测试
 │   └── i18n/                      # 国际化
 ├── tests/
-│   └── OpenDeepWiki.Tests/        # xUnit + FsCheck 测试
+│   ├── OpenDeepWiki.Tests/        # xUnit + FsCheck 测试
+│   └── OpenDeepWiki.E2EHost/      # 端到端测试使用的后端宿主（假的 Git 提供商，临时 SQLite 数据库）
 └── docs/                          # 本文档站点（Fumadocs）
 ```
 
@@ -148,9 +154,38 @@ dotnet test tests/OpenDeepWiki.Tests/OpenDeepWiki.Tests.csproj
 
 ```bash
 cd web
-npm test        # Vitest 单元测试
-npm run lint    # ESLint 检查
+npm test                      # Vitest 单元测试
+npx tsc --noEmit              # 类型检查
+node scripts/check-i18n.js    # 检查所有语言文件与英文的键一致
+npm run lint                  # ESLint 检查
 ```
+
+<Callout type="warn">
+  `npm run lint` 对整个 `web/` 目录仍会报告在本功能之前就存在的问题。共享仓库工作区的文件（`components/repositories`、`app/(main)/repositories`、`e2e`）应保持无 lint 问题。
+</Callout>
+
+### 后端工作流集成测试
+
+`tests/OpenDeepWiki.Tests/Integration/GitConnectionWorkflowTests.cs` 在真实 SQLite 文件上，通过真实 HTTP 管线运行一条完整流程：创建连接、分页浏览目录、连接仓库并选择多个分支、添加和移除分支、禁用连接、权限检查。只有 Git 提供商是假的。
+
+```bash
+dotnet test tests/OpenDeepWiki.Tests/OpenDeepWiki.Tests.csproj --filter "FullyQualifiedName~GitConnectionWorkflowTests"
+```
+
+设置 `OPENDEEPWIKI_TEST_POSTGRES` 为一个一次性 PostgreSQL 服务器的连接字符串（例如 `Host=127.0.0.1;Port=55440;Username=postgres;Password=...;Database=postgres`），PostgreSQL 相关测试才会运行；否则它们被跳过。
+
+### 端到端测试（Playwright，仅 Chromium）
+
+端到端测试在真实浏览器中运行共享仓库工作区的主要流程：GitHub、GitLab.com 和自托管 GitLab 的连接、目录、分支，匿名/普通用户/创建者/管理员权限，以及响应式布局。它们不访问真实的 Git 提供商，也不使用真实令牌。
+
+```bash
+cd web
+npm ci
+npx playwright install chromium     # 首次运行，下载 Chromium
+npm run test:e2e
+```
+
+需要 .NET 10 SDK。`npm run test:e2e` 自己启动并停止两个进程，使用固定端口：前端 `4310`，后端宿主 `4311`（`tests/OpenDeepWiki.E2EHost`，临时 SQLite 数据库和进程内的假提供商）。端口被占用时运行会直接停止，不会换端口。失败时的 trace 和截图保存在 `web/test-results`（在 CI 中另外生成 `web/playwright-report`），成功的运行不保留。`npm run test:e2e:ui` 打开 Playwright UI。
 
 ## 常见问题
 

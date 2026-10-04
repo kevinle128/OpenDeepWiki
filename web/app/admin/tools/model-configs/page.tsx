@@ -218,15 +218,13 @@ export default function AdminModelConfigsPage() {
     return new Map(models.map((model) => [`${model.providerId}:${model.modelId}`, model]));
   }, [models]);
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const [providerData, modelData, bindingData, settingsData] = await Promise.all([
+  const loadData = useCallback(() => {
+    return Promise.all([
         getAiProviders(),
         getAiModels(),
         getModelConfigs(),
         getSettings("ai"),
-      ]);
+      ]).then(([providerData, modelData, bindingData, settingsData]) => {
 
       const values = new Map(settingsData.map((setting) => [setting.key, setting.value || ""]));
       const nextTaskBindings = createEmptyTaskBindings();
@@ -242,17 +240,22 @@ export default function AdminModelConfigsPage() {
       setBindings(bindingData);
       setTaskBindings(nextTaskBindings);
       setSavedTaskBindings(nextTaskBindings);
-    } catch (error) {
+    }).catch(error => {
       console.error(error);
       toast.error(t("admin.modelConfigs.toasts.loadFailed"));
-    } finally {
+    }).finally(() => {
       setLoading(false);
-    }
+    });
   }, [t]);
 
+  const fetchData = useCallback(() => {
+    setLoading(true);
+    return loadData();
+  }, [loadData]);
+
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    void loadData();
+  }, [loadData]);
 
   const getModelsForProvider = useCallback(
     (providerId: string, selectedModelId?: string) => {

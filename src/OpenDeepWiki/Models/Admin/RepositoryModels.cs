@@ -49,6 +49,16 @@ public class AdminRepositoryDto
 public class UpdateRepositoryRequest
 {
     public bool? IsPublic { get; set; }
+
+    /// <summary>
+    /// Assigns the repository to another shared Git connection.
+    /// </summary>
+    public string? GitConnectionId { get; set; }
+
+    /// <summary>
+    /// Not accepted any more: a request that sets either field fails with a stable validation error.
+    /// The fields stay until the legacy columns are removed.
+    /// </summary>
     public string? AuthAccount { get; set; }
     public string? AuthPassword { get; set; }
 }

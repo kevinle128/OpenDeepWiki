@@ -23,10 +23,10 @@ export default function ProfilePage() {
   const [activeItem, setActiveItem] = useState(t("common.profile"));
 
   // Profile form state
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
+  const [name, setName] = useState(user?.name || "");
+  const [email, setEmail] = useState(user?.email || "");
   const [phone, setPhone] = useState("");
-  const [avatar, setAvatar] = useState("");
+  const [avatar, setAvatar] = useState(user?.avatar || "");
   const [isUpdating, setIsUpdating] = useState(false);
 
   // Password form state
@@ -34,20 +34,20 @@ export default function ProfilePage() {
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [isChangingPassword, setIsChangingPassword] = useState(false);
+  const [formUser, setFormUser] = useState(user);
+
+  if (formUser !== user) {
+    setFormUser(user);
+    setName(user?.name || "");
+    setEmail(user?.email || "");
+    setAvatar(user?.avatar || "");
+  }
 
   useEffect(() => {
     if (!authLoading && !isAuthenticated) {
       router.push("/auth?returnUrl=/profile");
     }
   }, [authLoading, isAuthenticated, router]);
-
-  useEffect(() => {
-    if (user) {
-      setName(user.name || "");
-      setEmail(user.email || "");
-      setAvatar(user.avatar || "");
-    }
-  }, [user]);
 
   const handleUpdateProfile = async (e: React.FormEvent) => {
     e.preventDefault();

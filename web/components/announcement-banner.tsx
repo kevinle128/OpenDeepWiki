@@ -1,28 +1,31 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { X, Sparkles } from "lucide-react";
 import { useTranslations } from "@/hooks/use-translations";
 import { cn } from "@/lib/utils";
 
 const STORAGE_KEY = "odw-announcement-routinai-v1";
 const SPONSOR_URL = "https://routin.ai/";
+const subscribe = (onChange: () => void) => {
+  window.addEventListener("storage", onChange);
+  return () => window.removeEventListener("storage", onChange);
+};
+const getVisible = () => {
+  try {
+    return window.localStorage.getItem(STORAGE_KEY) !== "1";
+  } catch {
+    return true;
+  }
+};
 
 export function AnnouncementBanner({ className }: { className?: string }) {
   const t = useTranslations();
-  const [visible, setVisible] = useState(false);
-
-  useEffect(() => {
-    try {
-      const dismissed = window.localStorage.getItem(STORAGE_KEY);
-      setVisible(dismissed !== "1");
-    } catch {
-      setVisible(true);
-    }
-  }, []);
+  const [dismissed, setDismissed] = useState(false);
+  const visible = useSyncExternalStore(subscribe, getVisible, () => false) && !dismissed;
 
   const handleDismiss = () => {
-    setVisible(false);
+    setDismissed(true);
     try {
       window.localStorage.setItem(STORAGE_KEY, "1");
     } catch {

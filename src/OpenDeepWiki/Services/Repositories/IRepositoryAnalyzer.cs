@@ -57,6 +57,17 @@ public interface IRepositoryAnalyzer
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Gets the paths that existed at <paramref name="fromCommitId"/> and are gone at <paramref name="toCommitId"/>:
+    /// deleted files and the old path of renamed files. <see cref="GetChangedFilesAsync"/> cannot report them.
+    /// </summary>
+    /// <returns>Relative paths, empty when the source has no history or nothing disappeared.</returns>
+    Task<string[]> GetDeletedFilesAsync(
+        RepositoryWorkspace workspace,
+        string? fromCommitId,
+        string toCommitId,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Detects the primary programming language of the repository.
     /// </summary>
     /// <param name="workspace">The repository workspace.</param>

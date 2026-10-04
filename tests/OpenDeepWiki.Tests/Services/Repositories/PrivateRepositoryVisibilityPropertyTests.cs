@@ -2,6 +2,7 @@ using FsCheck;
 using FsCheck.Fluent;
 using FsCheck.Xunit;
 using OpenDeepWiki.Entities;
+using OpenDeepWiki.Services.GitConnections;
 
 namespace OpenDeepWiki.Tests.Services.Repositories;
 
@@ -54,7 +55,7 @@ public class PrivateRepositoryVisibilityPropertyTests
     /// <summary>
     /// Generates a Repository entity without password (AuthPassword is null or empty).
     /// </summary>
-    private static Gen<Repository> GenerateRepositoryWithoutPassword()
+    private static Gen<Repository> GenerateRepositoryWithoutCredential()
     {
         return GenerateGuidString().SelectMany(id =>
             GenerateGuidString().SelectMany(ownerId =>
@@ -76,40 +77,43 @@ public class PrivateRepositoryVisibilityPropertyTests
     }
 
     /// <summary>
-    /// Generates a Repository entity with a valid password.
+    /// Generates a Repository entity with a stored credential: a Git connection, or (for repositories that
+    /// still depend on it) a legacy password.
     /// </summary>
-    private static Gen<Repository> GenerateRepositoryWithPassword()
+    private static Gen<Repository> GenerateRepositoryWithCredential()
     {
         return GenerateGuidString().SelectMany(id =>
             GenerateGuidString().SelectMany(ownerId =>
                 GenerateOrgName().SelectMany(orgName =>
                     GenerateRepoName().SelectMany(repoName =>
-                        GenerateValidPassword().Select(password =>
-                            new Repository
-                            {
-                                Id = id,
-                                OwnerUserId = ownerId,
-                                OrgName = orgName,
-                                RepoName = repoName,
-                                GitUrl = $"https://github.com/{orgName}/{repoName}.git",
-                                AuthPassword = password,
-                                IsPublic = true, // Start as public
-                                Status = RepositoryStatus.Completed,
-                                CreatedAt = DateTime.UtcNow
-                            })))));
+                        GenerateValidPassword().SelectMany(password =>
+                            Gen.Elements(true, false).Select(useConnection =>
+                                new Repository
+                                {
+                                    Id = id,
+                                    OwnerUserId = ownerId,
+                                    OrgName = orgName,
+                                    RepoName = repoName,
+                                    GitUrl = $"https://github.com/{orgName}/{repoName}.git",
+                                    GitConnectionId = useConnection ? Guid.NewGuid().ToString() : null,
+                                    AuthPassword = useConnection ? null : password,
+                                    IsPublic = true, // Start as public
+                                    Status = RepositoryStatus.Completed,
+                                    CreatedAt = DateTime.UtcNow
+                                }))))));
     }
 
     /// <summary>
     /// Property 3: 无密码仓库私有化限制
-    /// For any repository, if its AuthPassword is empty or null, 
+    /// For any repository, if it has neither a Git connection nor a legacy password, 
     /// a request to set IsPublic to false should be rejected with a validation error.
     /// **Validates: Requirements 3.2, 3.4, 5.3**
     /// </summary>
     [Property(MaxTest = 100)]
-    public Property NoPasswordRepository_CannotBeSetToPrivate()
+    public Property NoCredentialRepository_CannotBeSetToPrivate()
     {
         return Prop.ForAll(
-            GenerateRepositoryWithoutPassword().ToArbitrary(),
+            GenerateRepositoryWithoutCredential().ToArbitrary(),
             repository =>
             {
                 // Simulate the validation logic from UpdateVisibilityAsync
@@ -117,7 +121,7 @@ public class PrivateRepositoryVisibilityPropertyTests
                 var requestOwnerUserId = repository.OwnerUserId;
 
                 // The validation logic: if trying to set private and no password, should reject
-                var shouldReject = !requestIsPublic && string.IsNullOrWhiteSpace(repository.AuthPassword);
+                var shouldReject = !requestIsPublic && !GitCredentialResolver.HasStoredCredential(repository);
 
                 // This should always be true for repositories without password when setting to private
                 return shouldReject;
@@ -132,12 +136,12 @@ public class PrivateRepositoryVisibilityPropertyTests
     /// **Validates: Requirements 3.2, 3.4, 5.3**
     /// </summary>
     [Property(MaxTest = 100)]
-    public Property NoPasswordRepository_ReturnsValidationError()
+    public Property NoCredentialRepository_ReturnsValidationError()
     {
         const string expectedErrorMessage = "仓库凭据为空时不允许设置为私有";
 
         return Prop.ForAll(
-            GenerateRepositoryWithoutPassword().ToArbitrary(),
+            GenerateRepositoryWithoutCredential().ToArbitrary(),
             repository =>
             {
                 // Simulate the validation logic from UpdateVisibilityAsync
@@ -145,7 +149,7 @@ public class PrivateRepositoryVisibilityPropertyTests
 
                 // Simulate the error response generation
                 string? errorMessage = null;
-                if (!requestIsPublic && string.IsNullOrWhiteSpace(repository.AuthPassword))
+                if (!requestIsPublic && !GitCredentialResolver.HasStoredCredential(repository))
                 {
                     errorMessage = expectedErrorMessage;
                 }
@@ -162,17 +166,17 @@ public class PrivateRepositoryVisibilityPropertyTests
     /// **Validates: Requirements 3.2, 3.4, 5.3**
     /// </summary>
     [Property(MaxTest = 100)]
-    public Property NoPasswordRepository_CanBeSetToPublic()
+    public Property NoCredentialRepository_CanBeSetToPublic()
     {
         return Prop.ForAll(
-            GenerateRepositoryWithoutPassword().ToArbitrary(),
+            GenerateRepositoryWithoutCredential().ToArbitrary(),
             repository =>
             {
                 // Simulate the validation logic from UpdateVisibilityAsync
                 var requestIsPublic = true; // Setting to public
 
                 // The validation logic: setting to public should NOT be rejected
-                var shouldReject = !requestIsPublic && string.IsNullOrWhiteSpace(repository.AuthPassword);
+                var shouldReject = !requestIsPublic && !GitCredentialResolver.HasStoredCredential(repository);
 
                 // This should always be false (not rejected) when setting to public
                 return !shouldReject;
@@ -186,17 +190,17 @@ public class PrivateRepositoryVisibilityPropertyTests
     /// **Validates: Requirements 3.2, 3.4, 5.3**
     /// </summary>
     [Property(MaxTest = 100)]
-    public Property RepositoryWithPassword_CanBeSetToPrivate()
+    public Property RepositoryWithCredential_CanBeSetToPrivate()
     {
         return Prop.ForAll(
-            GenerateRepositoryWithPassword().ToArbitrary(),
+            GenerateRepositoryWithCredential().ToArbitrary(),
             repository =>
             {
                 // Simulate the validation logic from UpdateVisibilityAsync
                 var requestIsPublic = false; // Setting to private
 
                 // The validation logic: if has password, should NOT be rejected
-                var shouldReject = !requestIsPublic && string.IsNullOrWhiteSpace(repository.AuthPassword);
+                var shouldReject = !requestIsPublic && !GitCredentialResolver.HasStoredCredential(repository);
 
                 // This should always be false (not rejected) for repositories with password
                 return !shouldReject;
@@ -207,7 +211,7 @@ public class PrivateRepositoryVisibilityPropertyTests
     /// <summary>
     /// Property 3: 无密码仓库私有化限制 - 综合测试
     /// For any repository and any visibility setting, the validation logic should be consistent:
-    /// - Reject only when: IsPublic=false AND AuthPassword is empty/null
+    /// - Reject only when: IsPublic=false AND the repository has no stored credential
     /// - Allow in all other cases
     /// **Validates: Requirements 3.2, 3.4, 5.3**
     /// </summary>
@@ -215,8 +219,8 @@ public class PrivateRepositoryVisibilityPropertyTests
     public Property VisibilityValidation_IsConsistent()
     {
         var repositoryGen = Gen.OneOf(
-            GenerateRepositoryWithoutPassword(),
-            GenerateRepositoryWithPassword()
+            GenerateRepositoryWithoutCredential(),
+            GenerateRepositoryWithCredential()
         );
 
         var isPublicGen = ArbMap.Default.GeneratorFor<bool>();
@@ -229,7 +233,7 @@ public class PrivateRepositoryVisibilityPropertyTests
                 // Simulate the validation logic from UpdateVisibilityAsync
                 var requestIsPublic = isPublic;
 
-                var hasPassword = !string.IsNullOrWhiteSpace(repository.AuthPassword);
+                var hasPassword = GitCredentialResolver.HasStoredCredential(repository);
                 var shouldReject = !requestIsPublic && !hasPassword;
 
                 // Expected behavior:
@@ -262,8 +266,8 @@ public class PrivateRepositoryVisibilityPropertyTests
     public Property OwnershipValidation_NonOwnerRequestIsRejected()
     {
         var repositoryGen = Gen.OneOf(
-            GenerateRepositoryWithoutPassword(),
-            GenerateRepositoryWithPassword()
+            GenerateRepositoryWithoutCredential(),
+            GenerateRepositoryWithCredential()
         );
 
         return Prop.ForAll(
@@ -295,8 +299,8 @@ public class PrivateRepositoryVisibilityPropertyTests
         const string expectedErrorMessage = "无权限修改此仓库";
 
         var repositoryGen = Gen.OneOf(
-            GenerateRepositoryWithoutPassword(),
-            GenerateRepositoryWithPassword()
+            GenerateRepositoryWithoutCredential(),
+            GenerateRepositoryWithCredential()
         );
 
         return Prop.ForAll(
@@ -334,8 +338,8 @@ public class PrivateRepositoryVisibilityPropertyTests
     public Property OwnershipValidation_OwnerRequestIsNotRejectedDueToOwnership()
     {
         var repositoryGen = Gen.OneOf(
-            GenerateRepositoryWithoutPassword(),
-            GenerateRepositoryWithPassword()
+            GenerateRepositoryWithoutCredential(),
+            GenerateRepositoryWithCredential()
         );
 
         return Prop.ForAll(
@@ -368,7 +372,7 @@ public class PrivateRepositoryVisibilityPropertyTests
         const string passwordErrorMessage = "仓库凭据为空时不允许设置为私有";
 
         return Prop.ForAll(
-            GenerateRepositoryWithoutPassword().ToArbitrary(),
+            GenerateRepositoryWithoutCredential().ToArbitrary(),
             (repository) =>
             {
                 // Generate a different user ID to simulate non-owner request
@@ -392,7 +396,7 @@ public class PrivateRepositoryVisibilityPropertyTests
                     errorMessage = ownershipErrorMessage;
                 }
                 // Password check second (only if ownership passed)
-                else if (!requestIsPublic && string.IsNullOrWhiteSpace(repository.AuthPassword))
+                else if (!requestIsPublic && !GitCredentialResolver.HasStoredCredential(repository))
                 {
                     errorMessage = passwordErrorMessage;
                 }
@@ -414,8 +418,8 @@ public class PrivateRepositoryVisibilityPropertyTests
     public Property OwnershipValidation_IsConsistent()
     {
         var repositoryGen = Gen.OneOf(
-            GenerateRepositoryWithoutPassword(),
-            GenerateRepositoryWithPassword()
+            GenerateRepositoryWithoutCredential(),
+            GenerateRepositoryWithCredential()
         );
 
         return Prop.ForAll(
@@ -502,7 +506,7 @@ public class PrivateRepositoryVisibilityPropertyTests
         }
 
         // No-password private restriction
-        if (!request.IsPublic && string.IsNullOrWhiteSpace(repository.AuthPassword))
+        if (!request.IsPublic && !GitCredentialResolver.HasStoredCredential(repository))
         {
             return (false, repository, "仓库凭据为空时不允许设置为私有");
         }
@@ -521,10 +525,10 @@ public class PrivateRepositoryVisibilityPropertyTests
     /// **Validates: Requirements 5.4, 5.5**
     /// </summary>
     [Property(MaxTest = 100)]
-    public Property VisibilityPersistence_RepositoryWithPassword_SetToPrivate()
+    public Property VisibilityPersistence_RepositoryWithCredential_SetToPrivate()
     {
         return Prop.ForAll(
-            GenerateRepositoryWithPassword().ToArbitrary(),
+            GenerateRepositoryWithCredential().ToArbitrary(),
             repository =>
             {
                 // Setup mock store
@@ -557,10 +561,10 @@ public class PrivateRepositoryVisibilityPropertyTests
     /// **Validates: Requirements 5.4, 5.5**
     /// </summary>
     [Property(MaxTest = 100)]
-    public Property VisibilityPersistence_RepositoryWithPassword_SetToPublic()
+    public Property VisibilityPersistence_RepositoryWithCredential_SetToPublic()
     {
         return Prop.ForAll(
-            GenerateRepositoryWithPassword().ToArbitrary(),
+            GenerateRepositoryWithCredential().ToArbitrary(),
             repository =>
             {
                 // First set to private to test the transition
@@ -596,10 +600,10 @@ public class PrivateRepositoryVisibilityPropertyTests
     /// **Validates: Requirements 5.4, 5.5**
     /// </summary>
     [Property(MaxTest = 100)]
-    public Property VisibilityPersistence_RepositoryWithoutPassword_SetToPublic()
+    public Property VisibilityPersistence_RepositoryWithoutCredential_SetToPublic()
     {
         return Prop.ForAll(
-            GenerateRepositoryWithoutPassword().ToArbitrary(),
+            GenerateRepositoryWithoutCredential().ToArbitrary(),
             repository =>
             {
                 // Setup mock store
@@ -635,7 +639,7 @@ public class PrivateRepositoryVisibilityPropertyTests
     public Property VisibilityPersistence_QueryAfterUpdate_ReturnsCorrectValue()
     {
         return Prop.ForAll(
-            GenerateRepositoryWithPassword().ToArbitrary(),
+            GenerateRepositoryWithCredential().ToArbitrary(),
             ArbMap.Default.GeneratorFor<bool>().ToArbitrary(),
             (repository, targetIsPublic) =>
             {
@@ -675,7 +679,7 @@ public class PrivateRepositoryVisibilityPropertyTests
     public Property VisibilityPersistence_MultipleUpdates_FinalStateMatchesLastRequest()
     {
         // Combine generators into a tuple to avoid too many ForAll parameters
-        var combinedGen = GenerateRepositoryWithPassword().SelectMany(repo =>
+        var combinedGen = GenerateRepositoryWithCredential().SelectMany(repo =>
             ArbMap.Default.GeneratorFor<bool>().SelectMany(first =>
                 ArbMap.Default.GeneratorFor<bool>().SelectMany(second =>
                     ArbMap.Default.GeneratorFor<bool>().Select(third =>
@@ -736,7 +740,7 @@ public class PrivateRepositoryVisibilityPropertyTests
     public Property VisibilityPersistence_ResponseMatchesPersistedState()
     {
         return Prop.ForAll(
-            GenerateRepositoryWithPassword().ToArbitrary(),
+            GenerateRepositoryWithCredential().ToArbitrary(),
             ArbMap.Default.GeneratorFor<bool>().ToArbitrary(),
             (repository, targetIsPublic) =>
             {
@@ -778,8 +782,8 @@ public class PrivateRepositoryVisibilityPropertyTests
     public Property VisibilityPersistence_IsConsistent()
     {
         var repositoryGen = Gen.OneOf(
-            GenerateRepositoryWithoutPassword(),
-            GenerateRepositoryWithPassword()
+            GenerateRepositoryWithoutCredential(),
+            GenerateRepositoryWithCredential()
         );
 
         return Prop.ForAll(
@@ -792,7 +796,7 @@ public class PrivateRepositoryVisibilityPropertyTests
                 store.Add(repository);
 
                 // Determine if this is a valid request
-                var hasPassword = !string.IsNullOrWhiteSpace(repository.AuthPassword);
+                var hasPassword = GitCredentialResolver.HasStoredCredential(repository);
                 var isValidRequest = targetIsPublic || hasPassword; // Can set to public always, or private only with password
 
                 // Create the request

@@ -15,7 +15,297 @@ namespace OpenDeepWiki.Sqlite.Migrations
         protected override void BuildModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
-            modelBuilder.HasAnnotation("ProductVersion", "10.0.2");
+            modelBuilder.HasAnnotation("ProductVersion", "10.0.8");
+
+            modelBuilder.Entity("OpenDeepWiki.Entities.AiModelConfig", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal?>("CacheCreationTokenPrice")
+                        .HasPrecision(18, 8)
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal?>("CacheHitTokenPrice")
+                        .HasPrecision(18, 8)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CapabilitiesJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("ContextWindow")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DisplayName")
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal?>("InputTokenPrice")
+                        .HasPrecision(18, 8)
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("IsDefault")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("MaxOutputTokens")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ModelId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ModelType")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal?>("OutputTokenPrice")
+                        .HasPrecision(18, 8)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ProviderId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ProviderType")
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RequestOverridesJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("SupportsJsonMode")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("SupportsThinking")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("SupportsTools")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("SupportsVision")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("TagsJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ThinkingConfigJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<byte[]>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("BLOB");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("IsActive");
+
+                    b.HasIndex("ProviderId", "ModelId")
+                        .IsUnique();
+
+                    b.ToTable("AiModelConfigs");
+                });
+
+            modelBuilder.Entity("OpenDeepWiki.Entities.AiProviderConfig", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("AccountsJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ApiKey")
+                        .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("AuthType")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("BaseUrl")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ChannelConfigJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DefaultModelId")
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DisplayName")
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("IconUrl")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("IsBuiltIn")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ModelsEndpoint")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("OAuthConfigJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ProviderType")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RequestOverridesJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("SupportsModelDiscovery")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("SystemProxyUrl")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<byte[]>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("BLOB");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("IsActive");
+
+                    b.HasIndex("Name")
+                        .IsUnique();
+
+                    b.ToTable("AiProviderConfigs");
+                });
+
+            modelBuilder.Entity("OpenDeepWiki.Entities.ApiKey", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("ExpiresAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("KeyHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("KeyPrefix")
+                        .IsRequired()
+                        .HasMaxLength(12)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("LastUsedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LastUsedIp")
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Scope")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<byte[]>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("BLOB");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("KeyPrefix")
+                        .IsUnique();
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("ApiKeys");
+                });
 
             modelBuilder.Entity("OpenDeepWiki.Entities.AppStatistics", b =>
                 {
@@ -63,6 +353,85 @@ namespace OpenDeepWiki.Sqlite.Migrations
                         .IsUnique();
 
                     b.ToTable("AppStatistics");
+                });
+
+            modelBuilder.Entity("OpenDeepWiki.Entities.BranchGenerationTask", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("BranchId")
+                        .IsRequired()
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("CompletedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("IsManualTrigger")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Mode")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Priority")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("RepositoryId")
+                        .IsRequired()
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RequestedBy")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("RetryCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("StartedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("TargetCommitId")
+                        .HasMaxLength(40)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<byte[]>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("BLOB");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BranchId", "Status");
+
+                    b.HasIndex("RepositoryId", "Status");
+
+                    b.HasIndex("BranchId", "Status", "Mode")
+                        .IsUnique()
+                        .HasFilter("\"Status\" IN (0, 1)");
+
+                    b.HasIndex("Status", "Priority", "CreatedAt");
+
+                    b.ToTable("BranchGenerationTasks");
                 });
 
             modelBuilder.Entity("OpenDeepWiki.Entities.BranchLanguage", b =>
@@ -128,6 +497,10 @@ namespace OpenDeepWiki.Sqlite.Migrations
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("AiProviderId")
+                        .HasMaxLength(100)
                         .HasColumnType("TEXT");
 
                     b.Property<string>("AllowedDomains")
@@ -788,6 +1161,315 @@ namespace OpenDeepWiki.Sqlite.Migrations
                     b.ToTable("DocFiles");
                 });
 
+            modelBuilder.Entity("OpenDeepWiki.Entities.GitConnection", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("AccountName")
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ConcurrencyStamp")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CreatedByUserId")
+                        .IsRequired()
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DisplayName")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("");
+
+                    b.Property<string>("ExternalAccountId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("IsEnabled")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("LastValidatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LastValidationErrorCode")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("NormalizedServerUrl")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ProtectedToken")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Provider")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<byte[]>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("BLOB");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedByUserId");
+
+                    b.HasIndex("Provider", "NormalizedServerUrl", "ExternalAccountId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_GitConnections_Identity");
+
+                    b.ToTable("GitConnections");
+                });
+
+            modelBuilder.Entity("OpenDeepWiki.Entities.GitConnectionAuditEvent", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ActorUserId")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CorrelationId")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ErrorCode")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("EventType")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("GitConnectionId")
+                        .IsRequired()
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Outcome")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("RepositoryId")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ActorUserId", "CreatedAt");
+
+                    b.HasIndex("GitConnectionId", "CreatedAt");
+
+                    b.ToTable("GitConnectionAuditEvents");
+                });
+
+            modelBuilder.Entity("OpenDeepWiki.Entities.GitCredentialMigrationRecord", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("AttemptCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("CompletedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ErrorCode")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("GitConnectionId")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("LastAttemptAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RepositoryId")
+                        .IsRequired()
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("State")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RepositoryId")
+                        .IsUnique();
+
+                    b.ToTable("GitCredentialMigrationRecords");
+                });
+
+            modelBuilder.Entity("OpenDeepWiki.Entities.GitHubAppInstallation", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("AccountId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("AccountLogin")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("AccountType")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("AvatarUrl")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CachedAccessToken")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DepartmentId")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("InstallationId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("TokenExpiresAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<byte[]>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("BLOB");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DepartmentId");
+
+                    b.HasIndex("InstallationId")
+                        .IsUnique();
+
+                    b.ToTable("GitHubAppInstallations");
+                });
+
+            modelBuilder.Entity("OpenDeepWiki.Entities.GraphifyArtifact", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CommitId")
+                        .HasMaxLength(80)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("CompletedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("EntryFilePath")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("GraphJsonPath")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("OutputRoot")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ReportPath")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RepositoryBranchId")
+                        .IsRequired()
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RepositoryId")
+                        .IsRequired()
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("StartedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<byte[]>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("BLOB");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RepositoryBranchId")
+                        .IsUnique();
+
+                    b.HasIndex("RepositoryId");
+
+                    b.HasIndex("Status", "CreatedAt");
+
+                    b.ToTable("GraphifyArtifacts");
+                });
+
             modelBuilder.Entity("OpenDeepWiki.Entities.IncrementalUpdateTask", b =>
                 {
                     b.Property<string>("Id")
@@ -825,6 +1507,10 @@ namespace OpenDeepWiki.Sqlite.Migrations
 
                     b.Property<string>("RepositoryId")
                         .IsRequired()
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RequestedBy")
                         .HasMaxLength(36)
                         .HasColumnType("TEXT");
 
@@ -1241,6 +1927,10 @@ namespace OpenDeepWiki.Sqlite.Migrations
                     b.Property<string>("Id")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("AiProviderId")
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("ApiKey")
                         .HasMaxLength(500)
                         .HasColumnType("TEXT");
@@ -1295,6 +1985,8 @@ namespace OpenDeepWiki.Sqlite.Migrations
 
                     b.HasIndex("Name")
                         .IsUnique();
+
+                    b.HasIndex("AiProviderId", "ModelId");
 
                     b.ToTable("ModelConfigs");
                 });
@@ -1399,23 +2091,48 @@ namespace OpenDeepWiki.Sqlite.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("DefaultBranch")
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
                     b.Property<DateTime?>("DeletedAt")
                         .HasColumnType("TEXT");
 
-                    b.Property<int>("ForkCount")
+                    b.Property<string>("Description")
+                        .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("DirectoryTreeDepthOverride")
                         .HasColumnType("INTEGER");
 
-                    b.Property<string>("GitUrl")
-                        .IsRequired()
-                        .HasMaxLength(500)
+                    b.Property<string>("ExtraExcludedDirsJson")
+                        .HasMaxLength(2000)
                         .HasColumnType("TEXT");
+
+                    b.Property<int?>("FileListDepthOverride")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("ForkCount")
+                        .HasColumnType("INTEGER");
 
                     b.Property<bool>("GenerateSkill")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER")
                         .HasDefaultValue(true);
 
+                    b.Property<string>("GitConnectionId")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("GitUrl")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
                     b.Property<bool>("IsDeleted")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("IsDepartmentOwned")
                         .HasColumnType("INTEGER");
 
                     b.Property<bool>("IsPublic")
@@ -1423,6 +2140,15 @@ namespace OpenDeepWiki.Sqlite.Migrations
 
                     b.Property<DateTime?>("LastUpdateCheckAt")
                         .HasColumnType("TEXT");
+
+                    b.Property<int?>("MaxFilesPerDirectory")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("MaxTotalFiles")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("MaxTreeNodes")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("OrgName")
                         .IsRequired()
@@ -1438,9 +2164,40 @@ namespace OpenDeepWiki.Sqlite.Migrations
                         .HasMaxLength(50)
                         .HasColumnType("TEXT");
 
+                    b.Property<int?>("Provider")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ProviderBaseUrl")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ProviderRepositoryId")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("RepoName")
                         .IsRequired()
                         .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("ScanDepthMode")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(0);
+
+                    b.Property<double?>("ScanProfileConfidence")
+                        .HasPrecision(5, 4)
+                        .HasColumnType("REAL");
+
+                    b.Property<string>("ScanProfileHash")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ScanProfileReason")
+                        .HasMaxLength(1000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("ScanProfileUpdatedAt")
                         .HasColumnType("TEXT");
 
                     b.Property<int>("StarCount")
@@ -1468,8 +2225,17 @@ namespace OpenDeepWiki.Sqlite.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("OwnerUserId", "OrgName", "RepoName")
+                    b.HasIndex("GitConnectionId");
+
+                    b.HasIndex("OwnerUserId");
+
+                    b.HasIndex("OrgName", "RepoName")
                         .IsUnique();
+
+                    b.HasIndex("Provider", "ProviderBaseUrl", "ProviderRepositoryId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_Repositories_RemoteIdentity")
+                        .HasFilter("\"ProviderRepositoryId\" IS NOT NULL AND NOT \"IsDeleted\"");
 
                     b.ToTable("Repositories");
                 });
@@ -1538,11 +2304,27 @@ namespace OpenDeepWiki.Sqlite.Migrations
                     b.Property<DateTime?>("DeletedAt")
                         .HasColumnType("TEXT");
 
+                    b.Property<int?>("GenerationStatus")
+                        .HasColumnType("INTEGER");
+
                     b.Property<bool>("IsDeleted")
                         .HasColumnType("INTEGER");
 
                     b.Property<string>("LastCommitId")
                         .HasMaxLength(40)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("LastGenerationCompletedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LastGenerationError")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("LastGenerationStartedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LastGenerationTaskId")
+                        .HasMaxLength(36)
                         .HasColumnType("TEXT");
 
                     b.Property<DateTime?>("LastProcessedAt")
@@ -1569,15 +2351,92 @@ namespace OpenDeepWiki.Sqlite.Migrations
                     b.ToTable("RepositoryBranches");
                 });
 
-            modelBuilder.Entity("OpenDeepWiki.Entities.RepositoryProcessingLog", b =>
+            modelBuilder.Entity("OpenDeepWiki.Entities.RepositoryGenerationLock", b =>
                 {
                     b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("AcquiredAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("BranchId")
+                        .HasMaxLength(36)
                         .HasColumnType("TEXT");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("TEXT");
 
                     b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("HeartbeatAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("InstanceId")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("OwnerId")
+                        .IsRequired()
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("OwnerType")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("RepositoryId")
+                        .IsRequired()
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Scope")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<byte[]>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("BLOB");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BranchId");
+
+                    b.HasIndex("RepositoryId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_RepositoryGenerationLocks_RepositoryScope")
+                        .HasFilter("\"BranchId\" IS NULL");
+
+                    b.HasIndex("RepositoryId", "BranchId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_RepositoryGenerationLocks_RepositoryId_BranchId")
+                        .HasFilter("\"BranchId\" IS NOT NULL");
+
+                    b.ToTable("RepositoryGenerationLocks");
+                });
+
+            modelBuilder.Entity("OpenDeepWiki.Entities.RepositoryProcessingLog", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("BranchId")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("GenerationTaskId")
+                        .HasMaxLength(36)
                         .HasColumnType("TEXT");
 
                     b.Property<bool>("IsAiOutput")
@@ -1612,7 +2471,13 @@ namespace OpenDeepWiki.Sqlite.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("BranchId");
+
+                    b.HasIndex("GenerationTaskId");
+
                     b.HasIndex("RepositoryId", "CreatedAt");
+
+                    b.HasIndex("RepositoryId", "BranchId", "GenerationTaskId", "CreatedAt");
 
                     b.ToTable("RepositoryProcessingLogs");
                 });
@@ -1711,10 +2576,32 @@ namespace OpenDeepWiki.Sqlite.Migrations
                     b.Property<string>("Id")
                         .HasColumnType("TEXT");
 
+                    b.Property<int>("CacheCreationInputTokens")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<decimal?>("CacheCreationTokenPrice")
+                        .HasPrecision(18, 8)
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal?>("CacheHitTokenPrice")
+                        .HasPrecision(18, 8)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("CachedInputTokens")
+                        .HasColumnType("INTEGER");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("TEXT");
 
                     b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal>("InputCost")
+                        .HasPrecision(18, 8)
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal?>("InputTokenPrice")
+                        .HasPrecision(18, 8)
                         .HasColumnType("TEXT");
 
                     b.Property<int>("InputTokens")
@@ -1722,6 +2609,10 @@ namespace OpenDeepWiki.Sqlite.Migrations
 
                     b.Property<bool>("IsDeleted")
                         .HasColumnType("INTEGER");
+
+                    b.Property<string>("ModelId")
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("ModelName")
                         .HasMaxLength(100)
@@ -1731,14 +2622,38 @@ namespace OpenDeepWiki.Sqlite.Migrations
                         .HasMaxLength(50)
                         .HasColumnType("TEXT");
 
+                    b.Property<decimal>("OutputCost")
+                        .HasPrecision(18, 8)
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal?>("OutputTokenPrice")
+                        .HasPrecision(18, 8)
+                        .HasColumnType("TEXT");
+
                     b.Property<int>("OutputTokens")
                         .HasColumnType("INTEGER");
+
+                    b.Property<string>("ProviderId")
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ProviderName")
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ProviderType")
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT");
 
                     b.Property<DateTime>("RecordedAt")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("RepositoryId")
                         .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<decimal>("TotalCost")
+                        .HasPrecision(18, 8)
                         .HasColumnType("TEXT");
 
                     b.Property<DateTime?>("UpdatedAt")
@@ -2396,6 +3311,90 @@ namespace OpenDeepWiki.Sqlite.Migrations
                     b.ToTable("UserSubscriptions");
                 });
 
+            modelBuilder.Entity("OpenDeepWiki.Entities.WikiGenerationSlot", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("AcquiredAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("HeartbeatAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("InstanceId")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("OwnerId")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RepositoryId")
+                        .HasMaxLength(36)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("SlotIndex")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<byte[]>("Version")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("BLOB");
+
+                    b.Property<int?>("WorkType")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SlotIndex")
+                        .IsUnique();
+
+                    b.ToTable("WikiGenerationSlots");
+                });
+
+            modelBuilder.Entity("OpenDeepWiki.Entities.ApiKey", b =>
+                {
+                    b.HasOne("OpenDeepWiki.Entities.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("OpenDeepWiki.Entities.BranchGenerationTask", b =>
+                {
+                    b.HasOne("OpenDeepWiki.Entities.RepositoryBranch", "Branch")
+                        .WithMany()
+                        .HasForeignKey("BranchId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("OpenDeepWiki.Entities.Repository", "Repository")
+                        .WithMany()
+                        .HasForeignKey("RepositoryId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Branch");
+
+                    b.Navigation("Repository");
+                });
+
             modelBuilder.Entity("OpenDeepWiki.Entities.BranchLanguage", b =>
                 {
                     b.HasOne("OpenDeepWiki.Entities.RepositoryBranch", "RepositoryBranch")
@@ -2463,6 +3462,68 @@ namespace OpenDeepWiki.Sqlite.Migrations
                     b.Navigation("BranchLanguage");
                 });
 
+            modelBuilder.Entity("OpenDeepWiki.Entities.GitConnection", b =>
+                {
+                    b.HasOne("OpenDeepWiki.Entities.User", "CreatedBy")
+                        .WithMany()
+                        .HasForeignKey("CreatedByUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("CreatedBy");
+                });
+
+            modelBuilder.Entity("OpenDeepWiki.Entities.GitConnectionAuditEvent", b =>
+                {
+                    b.HasOne("OpenDeepWiki.Entities.GitConnection", "GitConnection")
+                        .WithMany()
+                        .HasForeignKey("GitConnectionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("GitConnection");
+                });
+
+            modelBuilder.Entity("OpenDeepWiki.Entities.GitCredentialMigrationRecord", b =>
+                {
+                    b.HasOne("OpenDeepWiki.Entities.Repository", "Repository")
+                        .WithMany()
+                        .HasForeignKey("RepositoryId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Repository");
+                });
+
+            modelBuilder.Entity("OpenDeepWiki.Entities.GitHubAppInstallation", b =>
+                {
+                    b.HasOne("OpenDeepWiki.Entities.Department", "Department")
+                        .WithMany()
+                        .HasForeignKey("DepartmentId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("Department");
+                });
+
+            modelBuilder.Entity("OpenDeepWiki.Entities.GraphifyArtifact", b =>
+                {
+                    b.HasOne("OpenDeepWiki.Entities.RepositoryBranch", "RepositoryBranch")
+                        .WithMany()
+                        .HasForeignKey("RepositoryBranchId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("OpenDeepWiki.Entities.Repository", "Repository")
+                        .WithMany()
+                        .HasForeignKey("RepositoryId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Repository");
+
+                    b.Navigation("RepositoryBranch");
+                });
+
             modelBuilder.Entity("OpenDeepWiki.Entities.IncrementalUpdateTask", b =>
                 {
                     b.HasOne("OpenDeepWiki.Entities.RepositoryBranch", "Branch")
@@ -2495,11 +3556,18 @@ namespace OpenDeepWiki.Sqlite.Migrations
 
             modelBuilder.Entity("OpenDeepWiki.Entities.Repository", b =>
                 {
+                    b.HasOne("OpenDeepWiki.Entities.GitConnection", "GitConnection")
+                        .WithMany()
+                        .HasForeignKey("GitConnectionId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("OpenDeepWiki.Entities.User", "Owner")
                         .WithMany()
                         .HasForeignKey("OwnerUserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+
+                    b.Navigation("GitConnection");
 
                     b.Navigation("Owner");
                 });
@@ -2542,15 +3610,45 @@ namespace OpenDeepWiki.Sqlite.Migrations
                     b.Navigation("Repository");
                 });
 
-            modelBuilder.Entity("OpenDeepWiki.Entities.RepositoryProcessingLog", b =>
+            modelBuilder.Entity("OpenDeepWiki.Entities.RepositoryGenerationLock", b =>
                 {
+                    b.HasOne("OpenDeepWiki.Entities.RepositoryBranch", "Branch")
+                        .WithMany()
+                        .HasForeignKey("BranchId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
                     b.HasOne("OpenDeepWiki.Entities.Repository", "Repository")
                         .WithMany()
                         .HasForeignKey("RepositoryId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
+                    b.Navigation("Branch");
+
                     b.Navigation("Repository");
+                });
+
+            modelBuilder.Entity("OpenDeepWiki.Entities.RepositoryProcessingLog", b =>
+                {
+                    b.HasOne("OpenDeepWiki.Entities.RepositoryBranch", "RepositoryBranch")
+                        .WithMany()
+                        .HasForeignKey("BranchId");
+
+                    b.HasOne("OpenDeepWiki.Entities.BranchGenerationTask", "GenerationTask")
+                        .WithMany()
+                        .HasForeignKey("GenerationTaskId");
+
+                    b.HasOne("OpenDeepWiki.Entities.Repository", "Repository")
+                        .WithMany()
+                        .HasForeignKey("RepositoryId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("GenerationTask");
+
+                    b.Navigation("Repository");
+
+                    b.Navigation("RepositoryBranch");
                 });
 
             modelBuilder.Entity("OpenDeepWiki.Entities.TokenUsage", b =>

@@ -32,11 +32,11 @@ export function VisibilityToggle({
   const t = useTranslations();
   const [isLoading, setIsLoading] = React.useState(false);
   const [currentIsPublic, setCurrentIsPublic] = React.useState(isPublic);
-
-  // 同步外部状态变化
-  React.useEffect(() => {
+  const [previousIsPublic, setPreviousIsPublic] = React.useState(isPublic);
+  if (previousIsPublic !== isPublic) {
+    setPreviousIsPublic(isPublic);
     setCurrentIsPublic(isPublic);
-  }, [isPublic]);
+  }
 
   // 判断是否可以切换到私有
   // 只有当仓库有密码时，才能设为私有

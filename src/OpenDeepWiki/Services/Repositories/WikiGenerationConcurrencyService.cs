@@ -18,6 +18,12 @@ public sealed class WikiGenerationWorkLease
     public required string SlotId { get; init; }
     public required int SlotIndex { get; init; }
     public required string RepositoryId { get; init; }
+
+    /// <summary>
+    /// Branch of a branch-scope lease. Null for a repository-scope lease.
+    /// </summary>
+    public string? BranchId { get; init; }
+
     public required RepositoryGenerationLockOwnerType OwnerType { get; init; }
     public required string OwnerId { get; init; }
     public required RepositoryGenerationLockScope Scope { get; init; }
@@ -35,7 +41,8 @@ public interface IWikiGenerationCoordinator
         string ownerId,
         RepositoryGenerationLockScope scope,
         WikiGenerationWorkType workType,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        string? branchId = null);
 
     Task HeartbeatAsync(
         IContext context,
@@ -66,11 +73,14 @@ public sealed class WikiGenerationCoordinator(
         string ownerId,
         RepositoryGenerationLockScope scope,
         WikiGenerationWorkType workType,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? branchId = null)
     {
         var existingLock = await context.RepositoryGenerationLocks
             .AsNoTracking()
-            .FirstOrDefaultAsync(item => item.RepositoryId == repositoryId && !item.IsDeleted, cancellationToken);
+            .FirstOrDefaultAsync(
+                item => item.RepositoryId == repositoryId && item.BranchId == branchId && !item.IsDeleted,
+                cancellationToken);
         var hadReservation = existingLock is not null &&
                              existingLock.OwnerType == ownerType &&
                              existingLock.OwnerId == ownerId;
@@ -82,7 +92,8 @@ public sealed class WikiGenerationCoordinator(
             ownerId,
             scope,
             cancellationToken,
-            bindToCurrentInstance: true);
+            bindToCurrentInstance: true,
+            branchId: branchId);
 
         if (!lockAcquired)
         {
@@ -94,11 +105,11 @@ public sealed class WikiGenerationCoordinator(
         {
             if (hadReservation)
             {
-                await lockService.UnbindAsync(context, repositoryId, ownerType, ownerId, cancellationToken);
+                await lockService.UnbindAsync(context, repositoryId, ownerType, ownerId, cancellationToken, branchId);
             }
             else
             {
-                await lockService.ReleaseAsync(context, repositoryId, ownerType, ownerId, cancellationToken);
+                await lockService.ReleaseAsync(context, repositoryId, ownerType, ownerId, cancellationToken, branchId);
             }
 
             return (WikiGenerationAcquireStatus.ClusterFull, null);
@@ -109,6 +120,7 @@ public sealed class WikiGenerationCoordinator(
             SlotId = slot.Id,
             SlotIndex = slot.SlotIndex,
             RepositoryId = repositoryId,
+            BranchId = branchId,
             OwnerType = ownerType,
             OwnerId = ownerId,
             Scope = scope,
@@ -126,7 +138,8 @@ public sealed class WikiGenerationCoordinator(
             lease.RepositoryId,
             lease.OwnerType,
             lease.OwnerId,
-            cancellationToken);
+            cancellationToken,
+            lease.BranchId);
 
         var now = DateTime.UtcNow;
         var instanceId = instanceIdentity.InstanceId;
@@ -171,7 +184,8 @@ public sealed class WikiGenerationCoordinator(
                 lease.RepositoryId,
                 lease.OwnerType,
                 lease.OwnerId,
-                cancellationToken);
+                cancellationToken,
+                lease.BranchId);
         }
     }
 

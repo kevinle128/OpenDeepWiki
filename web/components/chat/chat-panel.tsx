@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import Image from "next/image"
 import { useTranslations } from "next-intl"
 import { Send, Loader2, X, ImagePlus, Trash2, RefreshCw, GripVertical, Share2, Copy, Check } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -38,6 +39,18 @@ const MIN_WIDTH = 320
 const MAX_WIDTH = 800
 const DEFAULT_WIDTH = 420
 const STORAGE_KEY = "chat-panel-width"
+const subscribeWidth = (onChange: () => void) => {
+  window.addEventListener("storage", onChange)
+  return () => window.removeEventListener("storage", onChange)
+}
+const getSavedWidth = () => {
+  try {
+    const width = Number(localStorage.getItem(STORAGE_KEY))
+    return width >= MIN_WIDTH && width <= MAX_WIDTH ? width : DEFAULT_WIDTH
+  } catch {
+    return DEFAULT_WIDTH
+  }
+}
 
 /**
  * 对话面板属性
@@ -107,7 +120,9 @@ export function ChatPanel({
   } | null>(null)
   
   // 面板宽度状态
-  const [panelWidth, setPanelWidth] = React.useState(DEFAULT_WIDTH)
+  const savedWidth = React.useSyncExternalStore(subscribeWidth, getSavedWidth, () => DEFAULT_WIDTH)
+  const [resizedWidth, setPanelWidth] = React.useState<number | null>(null)
+  const panelWidth = resizedWidth ?? savedWidth
   const panelRef = React.useRef<HTMLDivElement>(null)
   const isDraggingRef = React.useRef(false)
   const rafRef = React.useRef<number | null>(null)
@@ -200,18 +215,7 @@ export function ChatPanel({
     } finally {
       setShareLoading(false)
     }
-  }, [messages, selectedModelId, models, context, locale, shareTitle, shareDescription, shareExpireMinutes])
-
-  // 从 localStorage 加载保存的宽度
-  React.useEffect(() => {
-    const saved = localStorage.getItem(STORAGE_KEY)
-    if (saved) {
-      const width = parseInt(saved, 10)
-      if (width >= MIN_WIDTH && width <= MAX_WIDTH) {
-        setPanelWidth(width)
-      }
-    }
-  }, [])
+  }, [messages, selectedModelId, models, context, locale, shareTitle, shareDescription, shareExpireMinutes, t])
 
   // 拖动调整宽度
   const handleResizeStart = React.useCallback((e: React.MouseEvent) => {
@@ -296,7 +300,7 @@ export function ChatPanel({
     }
 
     loadConfig()
-  }, [isOpen])
+  }, [isOpen, t])
 
   // 组件卸载时取消请求
   React.useEffect(() => {
@@ -823,7 +827,7 @@ export function ChatPanel({
                 <div className="flex flex-wrap gap-2">
                   {images.map((img, index) => (
                     <div key={index} className="relative">
-                      <img
+                      <Image unoptimized width={40} height={40}
                         src={img}
                         alt={t("image.preview", { index: index + 1 })}
                         className="h-10 w-10 rounded-lg object-cover border"

@@ -72,15 +72,15 @@ export async function fetchGitBranches(gitUrl: string): Promise<GitBranchesRespo
   const params = new URLSearchParams();
   params.set("gitUrl", gitUrl);
   
-  const url = buildApiUrl(`/api/v1/repositories/branches?${params.toString()}`);
-
-  const response = await fetch(url, { cache: "no-store", headers: await getSSRAuthHeaders() });
-
-  if (!response.ok) {
+  // The route requires a signed-in user. This helper runs in the browser, so it goes through the
+  // shared client, which adds the Authorization header; an anonymous caller gets "not supported".
+  try {
+    return await api.get<GitBranchesResponse>(`/api/v1/repositories/branches?${params.toString()}`, {
+      cache: "no-store",
+    });
+  } catch {
     return { branches: [], defaultBranch: null, isSupported: false };
   }
-
-  return (await response.json()) as GitBranchesResponse;
 }
 
 export async function fetchRepoTree(owner: string, repo: string, branch?: string, lang?: string) {

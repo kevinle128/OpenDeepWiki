@@ -26,34 +26,29 @@ export default function UserGitHubImportPage() {
   const [selectedInstallation, setSelectedInstallation] = useState<GitHubInstallation | null>(null);
   const [departments, setDepartments] = useState<UserDepartment[]>([]);
 
-  const fetchStatus = useCallback(async () => {
-    setLoading(true);
-    try {
-      const result = await getUserGitHubStatus();
+  const fetchStatus = useCallback(() => {
+    return getUserGitHubStatus().then(result => {
       setStatus(result);
-      if (result.installations.length > 0 && !selectedInstallation) {
-        setSelectedInstallation(result.installations[0]);
+      if (result.installations.length > 0) {
+        setSelectedInstallation(current => current ?? result.installations[0]);
       }
-    } catch {
+    }).catch(() => {
       toast.error(t("admin.githubImport.fetchStatusFailed"));
-    } finally {
+    }).finally(() => {
       setLoading(false);
-    }
-  }, [t, selectedInstallation]);
+    });
+  }, [t]);
 
-  const fetchDepartments = useCallback(async () => {
-    try {
-      const result = await getMyDepartments();
-      setDepartments(result);
-    } catch {
+  const fetchDepartments = useCallback(() => {
+    return getMyDepartments().then(setDepartments).catch(() => {
       // Departments may not be available
-    }
+    });
   }, []);
 
   useEffect(() => {
     fetchStatus();
     fetchDepartments();
-  }, []);
+  }, [fetchStatus, fetchDepartments]);
 
   const handleImport = useCallback(async (params: {
     installationId: number;
@@ -100,7 +95,7 @@ export default function UserGitHubImportPage() {
               </p>
             </div>
           </div>
-          <Button variant="outline" size="sm" onClick={fetchStatus}>
+          <Button variant="outline" size="sm" onClick={() => { setLoading(true); void fetchStatus(); }}>
             <RefreshCw className="h-4 w-4 mr-2" />
             {t("admin.githubImport.refresh")}
           </Button>

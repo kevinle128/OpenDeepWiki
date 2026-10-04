@@ -3,6 +3,7 @@
   "pages": [
     "docker-compose",
     "database",
-    "ai-providers"
+    "ai-providers",
+    "legacy-credential-migration"
   ]
 }

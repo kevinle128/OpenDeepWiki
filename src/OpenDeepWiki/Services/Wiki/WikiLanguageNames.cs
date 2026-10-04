@@ -8,9 +8,9 @@ public static class WikiLanguageNames
 {
     /// <summary>
     /// Default comma-separated wiki language list.
-    /// Keep in sync with <c>wikiLanguageCodes</c> in <c>web/i18n/config.ts</c>.
+    /// Keep in sync with <c>defaultWikiLanguages</c> in <c>web/i18n/config.ts</c>.
     /// </summary>
-    public const string DefaultLanguages = "en,zh,zh-tw,ja,ko,es,fr,de,pt-br,pl,ru,ar";
+    public const string DefaultLanguages = "en,vi";
 
     public static string Normalize(string? languageCode)
     {

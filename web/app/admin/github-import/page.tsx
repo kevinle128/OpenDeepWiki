@@ -66,15 +66,14 @@ export default function GitHubImportPage() {
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
   const [resetting, setResetting] = useState(false);
 
-  const fetchConfig = useCallback(async () => {
-    try {
-      const result = await getGitHubConfig();
+  const fetchConfig = useCallback(() => {
+    return getGitHubConfig().then(result => {
       setConfig(result);
       if (result.appId) setConfigForm((f) => ({ ...f, appId: result.appId || "" }));
       if (result.appName) setConfigForm((f) => ({ ...f, appName: result.appName || "" }));
-    } catch {
+    }).catch(() => {
       // Config endpoint may not be available
-    }
+    });
   }, []);
 
   const handleSaveConfig = async () => {
@@ -113,41 +112,41 @@ export default function GitHubImportPage() {
     }
   };
 
-  const fetchStatus = useCallback(async () => {
-    setLoading(true);
-    try {
-      const result = await getGitHubStatus();
+  const loadStatus = useCallback(() => {
+    return getGitHubStatus().then(result => {
       setStatus(result);
-      if (result.installations.length > 0 && !selectedInstallation) {
-        setSelectedInstallation(result.installations[0]);
+      if (result.installations.length > 0) {
+        setSelectedInstallation(current => current ?? result.installations[0]);
       }
-    } catch (error) {
+    }).catch(() => {
       toast.error(t("admin.githubImport.fetchStatusFailed"));
-    } finally {
+    }).finally(() => {
       setLoading(false);
-    }
-  }, [t, selectedInstallation]);
+    });
+  }, [t]);
 
-  const fetchDepartments = useCallback(async () => {
-    try {
-      const result = await getDepartments();
-      setDepartments(result);
-    } catch {
+  const fetchStatus = useCallback(() => {
+    setLoading(true);
+    return loadStatus();
+  }, [loadStatus]);
+
+  const fetchDepartments = useCallback(() => {
+    return getDepartments().then(setDepartments).catch(() => {
       // Departments may not be available
-    }
+    });
   }, []);
 
   useEffect(() => {
-    fetchStatus();
+    void loadStatus();
     fetchDepartments();
     fetchConfig();
-  }, []);
+  }, [loadStatus, fetchDepartments, fetchConfig]);
 
   const handleConnectNew = async () => {
     try {
       const { url } = await getGitHubInstallUrl();
       window.location.href = url;
-    } catch (error) {
+    } catch {
       toast.error("Failed to get install URL");
     }
   };

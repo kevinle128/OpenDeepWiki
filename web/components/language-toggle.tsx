@@ -16,11 +16,7 @@ import { useTranslations } from "@/hooks/use-translations";
 export function LanguageToggle() {
   const locale = useLocale() as Locale;
   const t = useTranslations();
-  const [mounted, setMounted] = React.useState(false);
-
-  React.useEffect(() => {
-    setMounted(true);
-  }, []);
+  const mounted = React.useSyncExternalStore(subscribe, () => true, () => false);
 
   const changeLocale = React.useCallback((newLocale: Locale) => {
     // 设置 cookie
@@ -59,3 +55,5 @@ export function LanguageToggle() {
     </DropdownMenu>
   );
 }
+
+const subscribe = () => () => {};

@@ -1,4 +1,5 @@
 import { getTranslations } from "next-intl/server";
+import Link from "next/link";
 
 export default async function NotFound() {
   const t = await getTranslations("common");
@@ -9,12 +10,12 @@ export default async function NotFound() {
       <p className="mt-3 text-sm text-muted-foreground">
         {t("repository.pageNotFound.description")}
       </p>
-      <a
+      <Link
         href="/"
         className="mt-6 inline-flex h-10 items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
       >
         {t("backToHome")}
-      </a>
+      </Link>
     </main>
   );
 }

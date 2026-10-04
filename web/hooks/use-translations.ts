@@ -20,6 +20,7 @@ export function useTranslations() {
   const apps = useNextIntlTranslations('apps');
   const admin = useNextIntlTranslations('admin');
   const subscribe = useNextIntlTranslations('subscribe');
+  const repositories = useNextIntlTranslations('repositories');
 
   // 使用 useCallback 缓存翻译函数，避免每次渲染创建新引用
   const t = useCallback((key: string, params?: TranslationValues): string => {
@@ -76,6 +77,9 @@ export function useTranslations() {
         case 'subscribe':
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           return subscribe.raw(translationKey) ? subscribe(translationKey as any, params as any) : key;
+        case 'repositories':
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          return repositories.raw(translationKey) ? repositories(translationKey as any, params as any) : key;
         default:
           return key;
       }
@@ -83,7 +87,7 @@ export function useTranslations() {
       console.error(`Translation error for key: ${key}`, error);
       return key;
     }
-  }, [common, theme, sidebar, auth, authUi, home, recommend, mindmap, ui, settings, profile, apps, admin, subscribe]);
+  }, [common, theme, sidebar, auth, authUi, home, recommend, mindmap, ui, settings, profile, apps, admin, subscribe, repositories]);
 
   return t;
 }

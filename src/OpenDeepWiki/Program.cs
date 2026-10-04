@@ -1,5 +1,6 @@
 using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using OpenDeepWiki.Agents;
@@ -12,6 +13,7 @@ using OpenDeepWiki.Infrastructure;
 using OpenDeepWiki.Services.Admin;
 using OpenDeepWiki.Services.AI;
 using OpenDeepWiki.Services.Auth;
+using OpenDeepWiki.Services.GitConnections;
 using OpenDeepWiki.Services.GitHub;
 using OpenDeepWiki.Services.Graphify;
 using OpenDeepWiki.Services.Chat;
@@ -64,6 +66,12 @@ try
     // 加载 .env 文件到 Configuration
     LoadEnvFile(builder.Configuration);
 
+    // Production must not start with a guessable signing key or a key ring that is lost on restart.
+    if (builder.Environment.IsProduction())
+    {
+        Program.ValidateProductionSecurity(builder.Configuration, builder.Environment);
+    }
+
     // Add Serilog logging
     builder.AddSerilogLogging();
 
@@ -76,24 +84,21 @@ try
     builder.Services.AddDatabase(builder.Configuration);
 
     // 配置JWT
+    var secretKey = Program.ResolveJwtSecretKey(builder.Configuration);
     builder.Services.AddOptions<JwtOptions>()
         .Bind(builder.Configuration.GetSection("Jwt"))
-        .PostConfigure(options =>
-        {
-            if (string.IsNullOrWhiteSpace(options.SecretKey))
-            {
-                options.SecretKey = builder.Configuration["JWT_SECRET_KEY"]
-                    ?? throw new InvalidOperationException("JWT密钥未配置");
-            }
-        });
+        .PostConfigure(options => options.SecretKey = secretKey);
 
     // 添加JWT认证
     var jwtOptions = builder.Configuration.GetSection("Jwt").Get<JwtOptions>() ?? new JwtOptions();
-    var secretKey = jwtOptions.SecretKey;
-    if (string.IsNullOrWhiteSpace(secretKey))
+
+    // Data Protection key ring: one application name, kept outside the database.
+    var dataProtection = builder.Services.AddDataProtection()
+        .SetApplicationName(Program.DataProtectionApplicationName);
+    var keyRingPath = builder.Configuration[Program.KeyRingPathKey];
+    if (!string.IsNullOrWhiteSpace(keyRingPath))
     {
-        secretKey = builder.Configuration["JWT_SECRET_KEY"]
-            ?? "OpenDeepWiki-Default-Secret-Key-Please-Change-In-Production-Environment-2024";
+        dataProtection.PersistKeysToFileSystem(Directory.CreateDirectory(keyRingPath));
     }
 
     builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
@@ -123,6 +128,14 @@ try
     builder.Services.AddScoped<IAuthService, AuthService>();
     builder.Services.AddScoped<IOAuthService, OAuthService>();
     builder.Services.AddScoped<IUserContext, UserContext>();
+
+    // Git connection secret boundary
+    builder.Services.AddSingleton<IGitConnectionSecretProtector, DataProtectionGitConnectionSecretProtector>();
+    builder.Services.AddScoped<IGitConnectionAuthorizationService, GitConnectionAuthorizationService>();
+    builder.Services.AddScoped<IGitCredentialResolver, GitCredentialResolver>();
+    builder.Services.AddGitProviderCatalog(builder.Configuration);
+    // The legacy credential backfill is started by an Admin request only; nothing runs it at startup.
+    builder.Services.AddLegacyGitCredentialMigration();
 
     // 添加HttpClient
     builder.Services.AddHttpClient();
@@ -176,6 +189,10 @@ try
     builder.Services.AddScoped<IWikiGenerationCoordinator, WikiGenerationCoordinator>();
     builder.Services.AddScoped<IRepositoryBranchProcessor, RepositoryBranchProcessor>();
     builder.Services.AddScoped<IBranchGenerationTaskService, BranchGenerationTaskService>();
+    builder.Services.AddScoped<IBranchActionAuditor, BranchActionAuditor>();
+    builder.Services.AddScoped<IRepositoryVisibilityProbe, ProviderRepositoryVisibilityProbe>();
+    builder.Services.AddScoped<IConnectedRepositoryService, ConnectedRepositoryService>();
+    builder.Services.AddScoped<IIndexedBranchRemovalService, IndexedBranchRemovalService>();
     builder.Services.AddScoped<IRepositoryScanPlanResolver, RepositoryScanPlanResolver>();
 
     // Configure Graphify artifact generation
@@ -376,6 +393,7 @@ try
 
     app.UseAuthentication();
     app.UseAuthorization();
+    app.UseRepositoryConnectionRequestErrors();
 
     // MCP server endpoints (official MCP server + scope via ConfigureSessionOptions)
     if (mcpEnabled)
@@ -399,6 +417,7 @@ try
     app.MapOAuthEndpoints();
     app.MapAdminEndpoints();
     app.MapGitHubImportEndpoints();
+    app.MapGitConnectionEndpoints();
     app.MapOrganizationEndpoints();
     app.MapChatAssistantEndpoints();
     app.MapChatAppEndpoints();
@@ -408,6 +427,7 @@ try
     app.MapSystemEndpoints();
     app.MapIncrementalUpdateEndpoints();
     app.MapBranchGenerationEndpoints();
+    app.MapConnectedRepositoryEndpoints();
     app.MapMcpProviderEndpoints();
 
     // 初始化数据库（创建默认数据）
@@ -426,6 +446,7 @@ try
 catch (Exception ex)
 {
     Log.Fatal(ex, "Application terminated unexpectedly");
+    Environment.ExitCode = 1;
 }
 finally
 {
@@ -502,4 +523,80 @@ static string NormalizeEnvKey(string key)
     }
 
     return key.Replace("__", ":");
+}
+
+/// <summary>
+/// Startup security rules. The class is public so tests can call the static helpers.
+/// </summary>
+public partial class Program
+{
+    /// <summary>
+    /// The only Data Protection application name. Every instance that shares a key ring must use it.
+    /// </summary>
+    public const string DataProtectionApplicationName = "OpenDeepWiki";
+
+    /// <summary>
+    /// Configuration key of the directory that holds the Data Protection key ring.
+    /// </summary>
+    public const string KeyRingPathKey = "DataProtection:KeyRingPath";
+
+    /// <summary>
+    /// Signing key that ships in appsettings.json and the source code. It is never acceptable in Production.
+    /// </summary>
+    public const string BuiltInJwtSecretKey =
+        "OpenDeepWiki-Default-Secret-Key-Please-Change-In-Production-Environment-2024";
+
+    /// <summary>
+    /// Minimum signing key length in UTF-8 bytes. HS256 needs a 256-bit key.
+    /// </summary>
+    public const int MinimumJwtSecretKeyBytes = 32;
+
+    /// <summary>
+    /// Returns the JWT signing key. A configured <c>Jwt:SecretKey</c> wins unless it is the built-in default,
+    /// then <c>JWT_SECRET_KEY</c> is used, and the built-in default is the last resort for local development.
+    /// </summary>
+    public static string ResolveJwtSecretKey(IConfiguration configuration)
+    {
+        var configured = configuration["Jwt:SecretKey"];
+        if (!string.IsNullOrWhiteSpace(configured)
+            && !string.Equals(configured, BuiltInJwtSecretKey, StringComparison.Ordinal))
+        {
+            return configured;
+        }
+
+        var fromEnvironment = configuration["JWT_SECRET_KEY"];
+        return string.IsNullOrWhiteSpace(fromEnvironment) ? BuiltInJwtSecretKey : fromEnvironment;
+    }
+
+    /// <summary>
+    /// Stops Production startup when the signing key is missing, built in, or shorter than
+    /// <see cref="MinimumJwtSecretKeyBytes"/> bytes, or when no durable key ring directory is configured.
+    /// Messages never contain key values. Other environments are not checked.
+    /// </summary>
+    public static void ValidateProductionSecurity(IConfiguration configuration, IHostEnvironment environment)
+    {
+        if (!environment.IsProduction())
+        {
+            return;
+        }
+
+        var jwtKey = ResolveJwtSecretKey(configuration);
+        if (string.Equals(jwtKey, BuiltInJwtSecretKey, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Production requires a custom JWT signing key. Set Jwt:SecretKey or JWT_SECRET_KEY.");
+        }
+
+        if (Encoding.UTF8.GetByteCount(jwtKey) < MinimumJwtSecretKeyBytes)
+        {
+            throw new InvalidOperationException(
+                $"The JWT signing key must be at least {MinimumJwtSecretKeyBytes} bytes long in Production.");
+        }
+
+        if (string.IsNullOrWhiteSpace(configuration[KeyRingPathKey]))
+        {
+            throw new InvalidOperationException(
+                $"Production requires a persistent Data Protection key ring. Set {KeyRingPathKey} to a durable directory.");
+        }
+    }
 }

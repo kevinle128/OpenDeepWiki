@@ -74,6 +74,7 @@ public class IncrementalUpdateWorker : BackgroundService
         var repositoryAnalyzer = scope.ServiceProvider.GetRequiredService<IRepositoryAnalyzer>();
         var coordinator = scope.ServiceProvider.GetService<IWikiGenerationCoordinator>();
         var wikiOptions = scope.ServiceProvider.GetService<IOptionsMonitor<WikiGeneratorOptions>>();
+        var visibilityProbe = scope.ServiceProvider.GetService<IRepositoryVisibilityProbe>();
 
         if (coordinator is not null)
         {
@@ -101,7 +102,7 @@ public class IncrementalUpdateWorker : BackgroundService
             }
         }
 
-        await CheckScheduledUpdatesAsync(context, gitPlatformService, repositoryAnalyzer, stoppingToken);
+        await CheckScheduledUpdatesAsync(context, gitPlatformService, repositoryAnalyzer, visibilityProbe, stoppingToken);
     }
 
     private async Task<List<IncrementalUpdateTask>> GetPendingTasksAsync(
@@ -138,7 +139,8 @@ public class IncrementalUpdateWorker : BackgroundService
                 pendingTask.Id,
                 RepositoryGenerationLockScope.Branch,
                 WikiGenerationWorkType.IncrementalTask,
-                stoppingToken);
+                stoppingToken,
+                pendingTask.BranchId);
 
             if (status == WikiGenerationAcquireStatus.ClusterFull)
             {
@@ -151,8 +153,8 @@ public class IncrementalUpdateWorker : BackgroundService
             if (status != WikiGenerationAcquireStatus.Acquired || acquiredLease is null)
             {
                 _logger.LogDebug(
-                    "Skipping incremental task because the repository is busy. TaskId: {TaskId}, RepositoryId: {RepositoryId}",
-                    pendingTask.Id, pendingTask.RepositoryId);
+                    "Skipping incremental task because the branch or repository is busy. TaskId: {TaskId}, RepositoryId: {RepositoryId}, BranchId: {BranchId}",
+                    pendingTask.Id, pendingTask.RepositoryId, pendingTask.BranchId);
                 return false;
             }
 
@@ -178,6 +180,7 @@ public class IncrementalUpdateWorker : BackgroundService
             "Processing task. TaskId: {TaskId}, RepositoryId: {RepositoryId}, BranchId: {BranchId}, Priority: {Priority}",
             task.Id, task.RepositoryId, task.BranchId, task.Priority);
 
+        var needsFullGeneration = false;
         try
         {
             var result = await updateService.ProcessIncrementalUpdateAsync(
@@ -192,6 +195,16 @@ public class IncrementalUpdateWorker : BackgroundService
                 _logger.LogInformation(
                     "Task completed successfully. TaskId: {TaskId}, ChangedFiles: {ChangedFiles}, Duration: {Duration}ms",
                     task.Id, result.ChangedFilesCount, result.Duration.TotalMilliseconds);
+            }
+            else if (result.RequiresFullGeneration)
+            {
+                needsFullGeneration = true;
+                await UpdateTaskStatusAsync(
+                    context, task, IncrementalUpdateStatus.Cancelled, result.ErrorMessage, stoppingToken);
+
+                _logger.LogInformation(
+                    "Task replaced by a full generation because source files were deleted. TaskId: {TaskId}",
+                    task.Id);
             }
             else
             {
@@ -232,7 +245,37 @@ public class IncrementalUpdateWorker : BackgroundService
             }
         }
 
+        if (needsFullGeneration)
+        {
+            // The full generation reserves the lock of the same branch, so it can start only after the lease above is released.
+            await EnqueueFullGenerationAsync(scope.ServiceProvider, task, stoppingToken);
+        }
+
         return false;
+    }
+
+    private async Task EnqueueFullGenerationAsync(
+        IServiceProvider services,
+        IncrementalUpdateTask task,
+        CancellationToken stoppingToken)
+    {
+        var taskService = services.GetService<IBranchGenerationTaskService>();
+        if (taskService is null)
+        {
+            _logger.LogWarning(
+                "Full generation could not be queued because the task service is unavailable. TaskId: {TaskId}",
+                task.Id);
+            return;
+        }
+
+        var result = await taskService.EnqueueFullGenerationAsync(
+            task.RepositoryId, task.BranchId, task.RequestedBy, cancellationToken: stoppingToken);
+        if (!result.Success && result.ErrorCode != "BRANCH_GENERATION_ACTIVE")
+        {
+            _logger.LogWarning(
+                "Full generation after deleted files was not queued. TaskId: {TaskId}, ErrorCode: {ErrorCode}",
+                task.Id, result.ErrorCode);
+        }
     }
 
     private static async Task<IncrementalUpdateTask?> TryClaimIncrementalTaskAsync(
@@ -317,6 +360,7 @@ public class IncrementalUpdateWorker : BackgroundService
         IContext context,
         IGitPlatformService gitPlatformService,
         IRepositoryAnalyzer repositoryAnalyzer,
+        IRepositoryVisibilityProbe? visibilityProbe,
         CancellationToken stoppingToken)
     {
         if (!_options.Enabled)
@@ -349,7 +393,7 @@ public class IncrementalUpdateWorker : BackgroundService
                 break;
             }
 
-            await SyncRepositoryVisibilityAsync(context, gitPlatformService, repository, stoppingToken);
+            await SyncRepositoryVisibilityAsync(context, gitPlatformService, visibilityProbe, repository, stoppingToken);
             await CreateScheduledUpdateTasksAsync(context, repositoryAnalyzer, repository, stoppingToken);
         }
     }
@@ -357,34 +401,28 @@ public class IncrementalUpdateWorker : BackgroundService
     private async Task SyncRepositoryVisibilityAsync(
         IContext context,
         IGitPlatformService gitPlatformService,
+        IRepositoryVisibilityProbe? visibilityProbe,
         Repository repository,
         CancellationToken stoppingToken)
     {
         try
         {
-            if (!IsPublicPlatform(repository.GitUrl) ||
-                string.IsNullOrWhiteSpace(repository.OrgName) ||
-                string.IsNullOrWhiteSpace(repository.RepoName))
+            var shouldBePublic = await ResolveCurrentVisibilityAsync(
+                gitPlatformService, visibilityProbe, repository, stoppingToken);
+            if (shouldBePublic is null)
             {
                 return;
             }
 
-            var repoInfo = await gitPlatformService.CheckRepoExistsAsync(repository.OrgName, repository.RepoName);
-            if (!repoInfo.Exists)
-            {
-                return;
-            }
-
-            var shouldBePublic = !repoInfo.IsPrivate;
             if (repository.IsPublic != shouldBePublic)
             {
                 _logger.LogInformation(
                     "Visibility mismatch detected for {Org}/{Repo}: DB={DbVisibility}, Actual={ActualVisibility}. Updating.",
                     repository.OrgName, repository.RepoName,
                     repository.IsPublic ? "Public" : "Private",
-                    shouldBePublic ? "Public" : "Private");
+                    shouldBePublic.Value ? "Public" : "Private");
 
-                repository.IsPublic = shouldBePublic;
+                repository.IsPublic = shouldBePublic.Value;
                 repository.UpdatedAt = DateTime.UtcNow;
                 await context.SaveChangesAsync(stoppingToken);
             }
@@ -397,13 +435,39 @@ public class IncrementalUpdateWorker : BackgroundService
         }
     }
 
-    private static bool IsPublicPlatform(string gitUrl)
+    /// <summary>
+    /// A repository with a provider identity is asked on its own provider. Only a repository without one that lives
+    /// on github.com uses the GitHub checker; every other host has no known way to answer, so its visibility stays.
+    /// </summary>
+    private static async Task<bool?> ResolveCurrentVisibilityAsync(
+        IGitPlatformService gitPlatformService,
+        IRepositoryVisibilityProbe? visibilityProbe,
+        Repository repository,
+        CancellationToken stoppingToken)
+    {
+        if (repository.Provider is not null)
+        {
+            return visibilityProbe is null
+                ? null
+                : await visibilityProbe.GetIsPublicAsync(repository, stoppingToken);
+        }
+
+        if (!IsGitHubHost(repository.GitUrl) ||
+            string.IsNullOrWhiteSpace(repository.OrgName) ||
+            string.IsNullOrWhiteSpace(repository.RepoName))
+        {
+            return null;
+        }
+
+        var repoInfo = await gitPlatformService.CheckRepoExistsAsync(repository.OrgName, repository.RepoName);
+        return repoInfo.Exists ? !repoInfo.IsPrivate : null;
+    }
+
+    private static bool IsGitHubHost(string gitUrl)
     {
         try
         {
-            var uri = new Uri(gitUrl);
-            var host = uri.Host.ToLowerInvariant();
-            return host is "github.com" or "gitee.com" or "gitlab.com";
+            return new Uri(gitUrl).Host.Equals("github.com", StringComparison.OrdinalIgnoreCase);
         }
         catch
         {

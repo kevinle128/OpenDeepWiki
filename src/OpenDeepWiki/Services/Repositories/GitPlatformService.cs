@@ -8,7 +8,6 @@ namespace OpenDeepWiki.Services.Repositories;
 public class GitPlatformService(IHttpClientFactory httpClientFactory, ILogger<GitPlatformService> logger, IConfiguration configuration) : IGitPlatformService
 {
     private string? GitHubToken => configuration["GitHub:Token"];
-    private string? GiteeToken => configuration["Gitee:Token"];
     private string? GitLabToken => configuration["GitLab:Token"];
     public async Task<GitRepoStats?> GetRepoStatsAsync(string gitUrl)
     {
@@ -127,11 +126,8 @@ public class GitPlatformService(IHttpClientFactory httpClientFactory, ILogger<Gi
             var client = httpClientFactory.CreateClient();
             client.DefaultRequestHeaders.Add("User-Agent", "OpenDeepWiki");
 
+            // Gitee requests stay anonymous: a token in the query string would leak into logs and proxies.
             var url = $"https://gitee.com/api/v5/repos/{owner}/{repo}";
-            if (!string.IsNullOrEmpty(GiteeToken))
-            {
-                url += $"?access_token={GiteeToken}";
-            }
 
             var response = await client.GetAsync(url);
 
@@ -214,10 +210,8 @@ public class GitPlatformService(IHttpClientFactory httpClientFactory, ILogger<Gi
             var client = httpClientFactory.CreateClient();
             client.DefaultRequestHeaders.Add("User-Agent", "OpenDeepWiki");
 
-            var tokenParam = !string.IsNullOrEmpty(GiteeToken) ? $"?access_token={GiteeToken}" : "";
-
             // 先获取默认分支
-            var repoResponse = await client.GetAsync($"https://gitee.com/api/v5/repos/{owner}/{repo}{tokenParam}");
+            var repoResponse = await client.GetAsync($"https://gitee.com/api/v5/repos/{owner}/{repo}");
             string? defaultBranch = null;
 
             if (repoResponse.IsSuccessStatusCode)
@@ -229,10 +223,6 @@ public class GitPlatformService(IHttpClientFactory httpClientFactory, ILogger<Gi
 
             // 获取分支列表
             var branchesUrl = $"https://gitee.com/api/v5/repos/{owner}/{repo}/branches?per_page=100";
-            if (!string.IsNullOrEmpty(GiteeToken))
-            {
-                branchesUrl += $"&access_token={GiteeToken}";
-            }
             var branchesResponse = await client.GetAsync(branchesUrl);
 
             if (!branchesResponse.IsSuccessStatusCode)

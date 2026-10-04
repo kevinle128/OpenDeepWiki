@@ -465,8 +465,6 @@ public static class DbInitializer
                 Version BLOB,
                 FOREIGN KEY (RepositoryId) REFERENCES Repositories(Id) ON DELETE CASCADE
             )");
-        await ctx.Database.ExecuteSqlRawAsync(
-            "CREATE UNIQUE INDEX IF NOT EXISTS IX_RepositoryGenerationLocks_RepositoryId ON RepositoryGenerationLocks (RepositoryId)");
 
         await ctx.Database.ExecuteSqlRawAsync(@"
             CREATE TABLE IF NOT EXISTS WikiGenerationSlots (
@@ -539,6 +537,141 @@ public static class DbInitializer
             "CREATE INDEX IF NOT EXISTS IX_RepositoryProcessingLogs_BranchId ON RepositoryProcessingLogs (BranchId)");
         await ctx.Database.ExecuteSqlRawAsync(
             "CREATE INDEX IF NOT EXISTS IX_RepositoryProcessingLogs_GenerationTaskId ON RepositoryProcessingLogs (GenerationTaskId)");
+
+        await CreateSqliteGitConnectionSchemaAsync(connection, ctx);
+        await ExpandSqliteRepositoryOrchestrationSchemaAsync(connection, ctx);
+        await CreateSqliteGitCredentialMigrationSchemaAsync(ctx);
+    }
+
+    /// <summary>
+    /// Expand step for the legacy credential backfill progress table. It only adds objects.
+    /// </summary>
+    private static async Task CreateSqliteGitCredentialMigrationSchemaAsync(DbContext ctx)
+    {
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            CREATE TABLE IF NOT EXISTS GitCredentialMigrationRecords (
+                Id TEXT NOT NULL CONSTRAINT PK_GitCredentialMigrationRecords PRIMARY KEY,
+                RepositoryId TEXT NOT NULL,
+                State INTEGER NOT NULL,
+                ErrorCode TEXT NULL,
+                GitConnectionId TEXT NULL,
+                AttemptCount INTEGER NOT NULL,
+                LastAttemptAt TEXT NOT NULL,
+                CompletedAt TEXT NULL,
+                CreatedAt TEXT NOT NULL,
+                CONSTRAINT FK_GitCredentialMigrationRecords_Repositories_RepositoryId FOREIGN KEY (RepositoryId) REFERENCES Repositories (Id) ON DELETE CASCADE
+            )");
+        await ctx.Database.ExecuteSqlRawAsync(
+            "CREATE UNIQUE INDEX IF NOT EXISTS IX_GitCredentialMigrationRecords_RepositoryId ON GitCredentialMigrationRecords (RepositoryId)");
+    }
+
+    /// <summary>
+    /// Expand step for stable remote identity and branch-aware generation locks.
+    /// The old single-column lock index is dropped: it would stop a second branch of one repository from locking.
+    /// </summary>
+    private static async Task ExpandSqliteRepositoryOrchestrationSchemaAsync(
+        System.Data.Common.DbConnection connection,
+        DbContext ctx)
+    {
+        await AddSqliteColumnIfMissingAsync(connection, ctx, "Repositories", "Provider", "INTEGER NULL");
+        await AddSqliteColumnIfMissingAsync(connection, ctx, "Repositories", "ProviderBaseUrl", "TEXT NULL");
+        await AddSqliteColumnIfMissingAsync(connection, ctx, "Repositories", "ProviderRepositoryId", "TEXT NULL");
+        await AddSqliteColumnIfMissingAsync(connection, ctx, "Repositories", "DefaultBranch", "TEXT NULL");
+        await ctx.Database.ExecuteSqlRawAsync(
+            "CREATE UNIQUE INDEX IF NOT EXISTS IX_Repositories_RemoteIdentity ON Repositories (Provider, ProviderBaseUrl, ProviderRepositoryId) " +
+            "WHERE \"ProviderRepositoryId\" IS NOT NULL AND NOT \"IsDeleted\"");
+
+        // SQLite adds a foreign key to an existing table only together with a new nullable column.
+        await AddSqliteColumnIfMissingAsync(
+            connection, ctx, "RepositoryGenerationLocks", "BranchId",
+            "TEXT NULL REFERENCES RepositoryBranches (Id) ON DELETE CASCADE");
+        await ctx.Database.ExecuteSqlRawAsync("DROP INDEX IF EXISTS IX_RepositoryGenerationLocks_RepositoryId");
+        await ctx.Database.ExecuteSqlRawAsync(
+            "CREATE UNIQUE INDEX IF NOT EXISTS IX_RepositoryGenerationLocks_RepositoryScope ON RepositoryGenerationLocks (RepositoryId) " +
+            "WHERE \"BranchId\" IS NULL");
+        await ctx.Database.ExecuteSqlRawAsync(
+            "CREATE UNIQUE INDEX IF NOT EXISTS IX_RepositoryGenerationLocks_RepositoryId_BranchId ON RepositoryGenerationLocks (RepositoryId, BranchId) " +
+            "WHERE \"BranchId\" IS NOT NULL");
+        await ctx.Database.ExecuteSqlRawAsync(
+            "CREATE INDEX IF NOT EXISTS IX_RepositoryGenerationLocks_BranchId ON RepositoryGenerationLocks (BranchId)");
+
+        if (await SqliteTableExistsAsync(connection, "IncrementalUpdateTasks"))
+        {
+            await AddSqliteColumnIfMissingAsync(connection, ctx, "IncrementalUpdateTasks", "RequestedBy", "TEXT NULL");
+        }
+    }
+
+    private static async Task<bool> SqliteTableExistsAsync(System.Data.Common.DbConnection connection, string tableName)
+    {
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=$name";
+        var parameter = cmd.CreateParameter();
+        parameter.ParameterName = "$name";
+        parameter.Value = tableName;
+        cmd.Parameters.Add(parameter);
+        return Convert.ToInt64(await cmd.ExecuteScalarAsync()) > 0;
+    }
+
+    /// <summary>
+    /// Expand step for shared Git connections. It only adds objects; legacy credential columns stay untouched.
+    /// </summary>
+    private static async Task CreateSqliteGitConnectionSchemaAsync(
+        System.Data.Common.DbConnection connection,
+        DbContext ctx)
+    {
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            CREATE TABLE IF NOT EXISTS GitConnections (
+                Id TEXT NOT NULL CONSTRAINT PK_GitConnections PRIMARY KEY,
+                Provider INTEGER NOT NULL,
+                NormalizedServerUrl TEXT NOT NULL,
+                ExternalAccountId TEXT NOT NULL,
+                DisplayName TEXT NOT NULL DEFAULT '',
+                AccountName TEXT NULL,
+                ProtectedToken TEXT NOT NULL,
+                CreatedByUserId TEXT NOT NULL,
+                IsEnabled INTEGER NOT NULL,
+                LastValidatedAt TEXT NULL,
+                LastValidationErrorCode TEXT NULL,
+                ConcurrencyStamp TEXT NOT NULL DEFAULT '',
+                CreatedAt TEXT NOT NULL,
+                UpdatedAt TEXT NULL,
+                DeletedAt TEXT NULL,
+                IsDeleted INTEGER NOT NULL,
+                Version BLOB NULL,
+                CONSTRAINT FK_GitConnections_Users_CreatedByUserId FOREIGN KEY (CreatedByUserId) REFERENCES Users (Id) ON DELETE RESTRICT
+            )");
+        // Tables from the first expand step lack these two columns.
+        await AddSqliteColumnIfMissingAsync(connection, ctx, "GitConnections", "DisplayName", "TEXT NOT NULL DEFAULT ''");
+        await AddSqliteColumnIfMissingAsync(connection, ctx, "GitConnections", "ConcurrencyStamp", "TEXT NOT NULL DEFAULT ''");
+        await ctx.Database.ExecuteSqlRawAsync(
+            "CREATE UNIQUE INDEX IF NOT EXISTS IX_GitConnections_Identity ON GitConnections (Provider, NormalizedServerUrl, ExternalAccountId)");
+        await ctx.Database.ExecuteSqlRawAsync(
+            "CREATE INDEX IF NOT EXISTS IX_GitConnections_CreatedByUserId ON GitConnections (CreatedByUserId)");
+
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            CREATE TABLE IF NOT EXISTS GitConnectionAuditEvents (
+                Id TEXT NOT NULL CONSTRAINT PK_GitConnectionAuditEvents PRIMARY KEY,
+                GitConnectionId TEXT NOT NULL,
+                ActorUserId TEXT NULL,
+                EventType INTEGER NOT NULL,
+                Outcome INTEGER NOT NULL,
+                RepositoryId TEXT NULL,
+                CorrelationId TEXT NULL,
+                ErrorCode TEXT NULL,
+                CreatedAt TEXT NOT NULL,
+                CONSTRAINT FK_GitConnectionAuditEvents_GitConnections_GitConnectionId FOREIGN KEY (GitConnectionId) REFERENCES GitConnections (Id) ON DELETE RESTRICT
+            )");
+        await ctx.Database.ExecuteSqlRawAsync(
+            "CREATE INDEX IF NOT EXISTS IX_GitConnectionAuditEvents_GitConnectionId_CreatedAt ON GitConnectionAuditEvents (GitConnectionId, CreatedAt)");
+        await ctx.Database.ExecuteSqlRawAsync(
+            "CREATE INDEX IF NOT EXISTS IX_GitConnectionAuditEvents_ActorUserId_CreatedAt ON GitConnectionAuditEvents (ActorUserId, CreatedAt)");
+
+        // SQLite adds a foreign key to an existing table only together with a new nullable column.
+        await AddSqliteColumnIfMissingAsync(
+            connection, ctx, "Repositories", "GitConnectionId",
+            "TEXT NULL REFERENCES GitConnections (Id) ON DELETE RESTRICT");
+        await ctx.Database.ExecuteSqlRawAsync(
+            "CREATE INDEX IF NOT EXISTS IX_Repositories_GitConnectionId ON Repositories (GitConnectionId)");
     }
 
     private static async Task AddSqliteColumnIfMissingAsync(
@@ -736,8 +869,6 @@ public static class DbInitializer
                 ""Version"" BYTEA,
                 FOREIGN KEY (""RepositoryId"") REFERENCES ""Repositories""(""Id"") ON DELETE CASCADE
             )");
-        await ctx.Database.ExecuteSqlRawAsync(@"
-            CREATE UNIQUE INDEX IF NOT EXISTS ""IX_RepositoryGenerationLocks_RepositoryId"" ON ""RepositoryGenerationLocks"" (""RepositoryId"")");
 
         await ctx.Database.ExecuteSqlRawAsync(@"
             CREATE TABLE IF NOT EXISTS ""WikiGenerationSlots"" (
@@ -808,5 +939,500 @@ public static class DbInitializer
             CREATE INDEX IF NOT EXISTS ""IX_RepositoryProcessingLogs_BranchId"" ON ""RepositoryProcessingLogs"" (""BranchId"")");
         await ctx.Database.ExecuteSqlRawAsync(@"
             CREATE INDEX IF NOT EXISTS ""IX_RepositoryProcessingLogs_GenerationTaskId"" ON ""RepositoryProcessingLogs"" (""GenerationTaskId"")");
+
+        await CreatePostgresqlGitConnectionSchemaAsync(ctx);
+        await ExpandPostgresqlRepositoryOrchestrationSchemaAsync(ctx);
+        await CreatePostgresqlGitCredentialMigrationSchemaAsync(ctx);
+    }
+
+    /// <summary>
+    /// Expand step for the legacy credential backfill progress table. It only adds objects.
+    /// </summary>
+    private static async Task CreatePostgresqlGitCredentialMigrationSchemaAsync(DbContext ctx)
+    {
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            CREATE TABLE IF NOT EXISTS ""GitCredentialMigrationRecords"" (
+                ""Id"" character varying(36) NOT NULL,
+                ""RepositoryId"" character varying(36) NOT NULL,
+                ""State"" integer NOT NULL,
+                ""ErrorCode"" character varying(64),
+                ""GitConnectionId"" character varying(36),
+                ""AttemptCount"" integer NOT NULL,
+                ""LastAttemptAt"" timestamp with time zone NOT NULL,
+                ""CompletedAt"" timestamp with time zone,
+                ""CreatedAt"" timestamp with time zone NOT NULL,
+                CONSTRAINT ""PK_GitCredentialMigrationRecords"" PRIMARY KEY (""Id""),
+                CONSTRAINT ""FK_GitCredentialMigrationRecords_Repositories_RepositoryId"" FOREIGN KEY (""RepositoryId"") REFERENCES ""Repositories"" (""Id"") ON DELETE CASCADE
+            )");
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            CREATE UNIQUE INDEX IF NOT EXISTS ""IX_GitCredentialMigrationRecords_RepositoryId"" ON ""GitCredentialMigrationRecords"" (""RepositoryId"")");
+    }
+
+    /// <summary>
+    /// Expand step for stable remote identity and branch-aware generation locks.
+    /// The old single-column lock index is dropped: it would stop a second branch of one repository from locking.
+    /// </summary>
+    private static async Task ExpandPostgresqlRepositoryOrchestrationSchemaAsync(DbContext ctx)
+    {
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            ALTER TABLE ""Repositories"" ADD COLUMN IF NOT EXISTS ""Provider"" integer;
+            ALTER TABLE ""Repositories"" ADD COLUMN IF NOT EXISTS ""ProviderBaseUrl"" character varying(500);
+            ALTER TABLE ""Repositories"" ADD COLUMN IF NOT EXISTS ""ProviderRepositoryId"" character varying(128);
+            ALTER TABLE ""Repositories"" ADD COLUMN IF NOT EXISTS ""DefaultBranch"" character varying(200);");
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            CREATE UNIQUE INDEX IF NOT EXISTS ""IX_Repositories_RemoteIdentity"" ON ""Repositories"" (""Provider"", ""ProviderBaseUrl"", ""ProviderRepositoryId"")
+            WHERE ""ProviderRepositoryId"" IS NOT NULL AND NOT ""IsDeleted""");
+
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            ALTER TABLE ""RepositoryGenerationLocks"" ADD COLUMN IF NOT EXISTS ""BranchId"" character varying(36)");
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conname = 'FK_RepositoryGenerationLocks_RepositoryBranches_BranchId'
+                      AND conrelid = '""RepositoryGenerationLocks""'::regclass) THEN
+                    ALTER TABLE ""RepositoryGenerationLocks""
+                        ADD CONSTRAINT ""FK_RepositoryGenerationLocks_RepositoryBranches_BranchId""
+                        FOREIGN KEY (""BranchId"") REFERENCES ""RepositoryBranches"" (""Id"") ON DELETE CASCADE;
+                END IF;
+            END
+            $$");
+        await ctx.Database.ExecuteSqlRawAsync(@"DROP INDEX IF EXISTS ""IX_RepositoryGenerationLocks_RepositoryId""");
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            CREATE UNIQUE INDEX IF NOT EXISTS ""IX_RepositoryGenerationLocks_RepositoryScope"" ON ""RepositoryGenerationLocks"" (""RepositoryId"")
+            WHERE ""BranchId"" IS NULL");
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            CREATE UNIQUE INDEX IF NOT EXISTS ""IX_RepositoryGenerationLocks_RepositoryId_BranchId"" ON ""RepositoryGenerationLocks"" (""RepositoryId"", ""BranchId"")
+            WHERE ""BranchId"" IS NOT NULL");
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            CREATE INDEX IF NOT EXISTS ""IX_RepositoryGenerationLocks_BranchId"" ON ""RepositoryGenerationLocks"" (""BranchId"")");
+
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            ALTER TABLE IF EXISTS ""IncrementalUpdateTasks"" ADD COLUMN IF NOT EXISTS ""RequestedBy"" character varying(36)");
+    }
+
+    /// <summary>
+    /// Expand step for shared Git connections. It only adds objects; legacy credential columns stay untouched.
+    /// </summary>
+    private static async Task CreatePostgresqlGitConnectionSchemaAsync(DbContext ctx)
+    {
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            CREATE TABLE IF NOT EXISTS ""GitConnections"" (
+                ""Id"" text NOT NULL,
+                ""Provider"" integer NOT NULL,
+                ""NormalizedServerUrl"" character varying(500) NOT NULL,
+                ""ExternalAccountId"" character varying(128) NOT NULL,
+                ""DisplayName"" character varying(200) NOT NULL DEFAULT '',
+                ""AccountName"" character varying(200),
+                ""ProtectedToken"" text NOT NULL,
+                ""CreatedByUserId"" character varying(36) NOT NULL,
+                ""IsEnabled"" boolean NOT NULL,
+                ""LastValidatedAt"" timestamp with time zone,
+                ""LastValidationErrorCode"" character varying(64),
+                ""ConcurrencyStamp"" character varying(36) NOT NULL DEFAULT '',
+                ""CreatedAt"" timestamp with time zone NOT NULL,
+                ""UpdatedAt"" timestamp with time zone,
+                ""DeletedAt"" timestamp with time zone,
+                ""IsDeleted"" boolean NOT NULL,
+                ""Version"" bytea,
+                CONSTRAINT ""PK_GitConnections"" PRIMARY KEY (""Id""),
+                CONSTRAINT ""FK_GitConnections_Users_CreatedByUserId"" FOREIGN KEY (""CreatedByUserId"") REFERENCES ""Users"" (""Id"") ON DELETE RESTRICT
+            )");
+        // Tables from the first expand step lack these two columns.
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            ALTER TABLE ""GitConnections"" ADD COLUMN IF NOT EXISTS ""DisplayName"" character varying(200) NOT NULL DEFAULT ''");
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            ALTER TABLE ""GitConnections"" ADD COLUMN IF NOT EXISTS ""ConcurrencyStamp"" character varying(36) NOT NULL DEFAULT ''");
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            CREATE UNIQUE INDEX IF NOT EXISTS ""IX_GitConnections_Identity"" ON ""GitConnections"" (""Provider"", ""NormalizedServerUrl"", ""ExternalAccountId"")");
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            CREATE INDEX IF NOT EXISTS ""IX_GitConnections_CreatedByUserId"" ON ""GitConnections"" (""CreatedByUserId"")");
+
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            CREATE TABLE IF NOT EXISTS ""GitConnectionAuditEvents"" (
+                ""Id"" character varying(36) NOT NULL,
+                ""GitConnectionId"" character varying(36) NOT NULL,
+                ""ActorUserId"" character varying(36),
+                ""EventType"" integer NOT NULL,
+                ""Outcome"" integer NOT NULL,
+                ""RepositoryId"" character varying(36),
+                ""CorrelationId"" character varying(64),
+                ""ErrorCode"" character varying(64),
+                ""CreatedAt"" timestamp with time zone NOT NULL,
+                CONSTRAINT ""PK_GitConnectionAuditEvents"" PRIMARY KEY (""Id""),
+                CONSTRAINT ""FK_GitConnectionAuditEvents_GitConnections_GitConnectionId"" FOREIGN KEY (""GitConnectionId"") REFERENCES ""GitConnections"" (""Id"") ON DELETE RESTRICT
+            )");
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            CREATE INDEX IF NOT EXISTS ""IX_GitConnectionAuditEvents_GitConnectionId_CreatedAt"" ON ""GitConnectionAuditEvents"" (""GitConnectionId"", ""CreatedAt"")");
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            CREATE INDEX IF NOT EXISTS ""IX_GitConnectionAuditEvents_ActorUserId_CreatedAt"" ON ""GitConnectionAuditEvents"" (""ActorUserId"", ""CreatedAt"")");
+
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            ALTER TABLE ""Repositories"" ADD COLUMN IF NOT EXISTS ""GitConnectionId"" character varying(36)");
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conname = 'FK_Repositories_GitConnections_GitConnectionId'
+                      AND conrelid = '""Repositories""'::regclass) THEN
+                    ALTER TABLE ""Repositories""
+                        ADD CONSTRAINT ""FK_Repositories_GitConnections_GitConnectionId""
+                        FOREIGN KEY (""GitConnectionId"") REFERENCES ""GitConnections"" (""Id"") ON DELETE RESTRICT;
+                END IF;
+            END
+            $$");
+        await ctx.Database.ExecuteSqlRawAsync(@"
+            CREATE INDEX IF NOT EXISTS ""IX_Repositories_GitConnectionId"" ON ""Repositories"" (""GitConnectionId"")");
+    }
+
+    // ---- contract step: not called by InitializeAsync ----
+
+    private static readonly string[] LegacyCredentialColumns = ["AuthAccount", "AuthPassword"];
+
+    /// <summary>
+    /// Contract step: removes the legacy repository credential columns.
+    /// Nothing in the startup path calls this method. An operator runs it only after the backfill, one full update
+    /// cycle, and verified database and key ring backups. It refuses to run while an active repository still
+    /// depends on a legacy credential or holds a credential in its Git URL, and it does nothing when the columns are
+    /// already gone. SQLite rebuilds the table so that every column, foreign key, and index survives.
+    /// </summary>
+    internal static async Task ApplyLegacyCredentialContractAsync(DbContext ctx, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(ctx);
+        var isSqlite = ctx.Database.ProviderName?.Contains("Sqlite", StringComparison.OrdinalIgnoreCase) == true;
+        if (isSqlite)
+        {
+            await ApplySqliteLegacyCredentialContractAsync(ctx, cancellationToken);
+        }
+        else
+        {
+            await ApplyPostgresqlLegacyCredentialContractAsync(ctx, cancellationToken);
+        }
+    }
+
+    private static InvalidOperationException ContractBlocked(long count)
+        => new($"Legacy credential contract is blocked: {count} active repositories still depend on legacy credentials or hold a credential in the Git URL.");
+
+    private static async Task ApplySqliteLegacyCredentialContractAsync(DbContext ctx, CancellationToken cancellationToken)
+    {
+        var connection = ctx.Database.GetDbConnection();
+        var openedHere = connection.State != System.Data.ConnectionState.Open;
+        if (openedHere)
+        {
+            await connection.OpenAsync(cancellationToken);
+        }
+
+        try
+        {
+            var present = await SqliteLegacyColumnsAsync(connection, null, cancellationToken);
+            if (present.Count == 0)
+            {
+                return;
+            }
+
+            // The pragma is a no-op inside a transaction, so it is set before the transaction starts.
+            var foreignKeysWereOn = Convert.ToInt64(await SqliteScalarAsync(connection, null, "PRAGMA foreign_keys", cancellationToken)) != 0;
+            await SqliteExecuteAsync(connection, null, "PRAGMA foreign_keys = OFF", cancellationToken);
+            try
+            {
+                await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+                try
+                {
+                    await RebuildSqliteRepositoriesWithoutLegacyColumnsAsync(connection, transaction, cancellationToken);
+                    await transaction.CommitAsync(cancellationToken);
+                }
+                catch
+                {
+                    await transaction.RollbackAsync(CancellationToken.None);
+                    throw;
+                }
+            }
+            finally
+            {
+                if (foreignKeysWereOn)
+                {
+                    await SqliteExecuteAsync(connection, null, "PRAGMA foreign_keys = ON", CancellationToken.None);
+                }
+            }
+        }
+        finally
+        {
+            if (openedHere)
+            {
+                await connection.CloseAsync();
+            }
+        }
+    }
+
+    private static async Task RebuildSqliteRepositoriesWithoutLegacyColumnsAsync(
+        System.Data.Common.DbConnection connection,
+        System.Data.Common.DbTransaction transaction,
+        CancellationToken cancellationToken)
+    {
+        var present = await SqliteLegacyColumnsAsync(connection, transaction, cancellationToken);
+
+        var credentialTest = string.Join(" OR ", present.Select(column => $"trim(coalesce({column}, '')) <> ''"));
+        var blocked = Convert.ToInt64(await SqliteScalarAsync(connection, transaction,
+            "SELECT COUNT(*) FROM Repositories WHERE IsDeleted = 0 AND " +
+            $"((GitConnectionId IS NULL AND ({credentialTest})) OR GitUrl LIKE '%://%@%')", cancellationToken));
+        if (blocked > 0)
+        {
+            throw ContractBlocked(blocked);
+        }
+
+        var createSql = (string?)await SqliteScalarAsync(connection, transaction,
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'Repositories'", cancellationToken)
+            ?? throw new InvalidOperationException("The Repositories table does not exist.");
+        var dependentSql = new List<string>();
+        await using (var command = connection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText =
+                "SELECT sql FROM sqlite_master WHERE tbl_name = 'Repositories' AND type IN ('index', 'trigger') AND sql IS NOT NULL ORDER BY type DESC, name";
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                dependentSql.Add(reader.GetString(0));
+            }
+        }
+
+        var keptColumns = new List<string>();
+        await using (var command = connection.CreateCommand())
+        {
+            command.Transaction = transaction;
+            command.CommandText = "SELECT name FROM pragma_table_info('Repositories') ORDER BY cid";
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                var name = reader.GetString(0);
+                if (!LegacyCredentialColumns.Contains(name, StringComparer.OrdinalIgnoreCase))
+                {
+                    keptColumns.Add(name);
+                }
+            }
+        }
+
+        var open = createSql.IndexOf('(');
+        var close = createSql.LastIndexOf(')');
+        if (open < 0 || close < open)
+        {
+            throw new InvalidOperationException("The Repositories table definition cannot be read.");
+        }
+
+        var definitions = SplitSqliteDefinitions(createSql[(open + 1)..close])
+            .Where(definition => !IsLegacyColumnDefinition(definition))
+            .ToList();
+        var rebuiltSql = $"CREATE TABLE \"Repositories__contract\" ({string.Join(",", definitions)}){createSql[(close + 1)..]}";
+        var columnList = string.Join(", ", keptColumns.Select(column => $"\"{column}\""));
+
+        await SqliteExecuteAsync(connection, transaction, rebuiltSql, cancellationToken);
+        await SqliteExecuteAsync(connection, transaction,
+            $"INSERT INTO \"Repositories__contract\" ({columnList}) SELECT {columnList} FROM \"Repositories\"", cancellationToken);
+
+        var oldCount = Convert.ToInt64(await SqliteScalarAsync(connection, transaction, "SELECT COUNT(*) FROM \"Repositories\"", cancellationToken));
+        var newCount = Convert.ToInt64(await SqliteScalarAsync(connection, transaction, "SELECT COUNT(*) FROM \"Repositories__contract\"", cancellationToken));
+        if (oldCount != newCount)
+        {
+            throw new InvalidOperationException("The rebuilt Repositories table has a different row count.");
+        }
+
+        await SqliteExecuteAsync(connection, transaction, "DROP TABLE \"Repositories\"", cancellationToken);
+        await SqliteExecuteAsync(connection, transaction, "ALTER TABLE \"Repositories__contract\" RENAME TO \"Repositories\"", cancellationToken);
+        foreach (var sql in dependentSql)
+        {
+            await SqliteExecuteAsync(connection, transaction, sql, cancellationToken);
+        }
+
+        var violations = Convert.ToInt64(await SqliteScalarAsync(connection, transaction,
+            "SELECT COUNT(*) FROM pragma_foreign_key_check", cancellationToken));
+        if (violations > 0)
+        {
+            throw new InvalidOperationException("The rebuilt Repositories table breaks a foreign key.");
+        }
+    }
+
+    private static async Task<List<string>> SqliteLegacyColumnsAsync(
+        System.Data.Common.DbConnection connection,
+        System.Data.Common.DbTransaction? transaction,
+        CancellationToken cancellationToken)
+    {
+        var present = new List<string>();
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT name FROM pragma_table_info('Repositories') WHERE name IN ('AuthAccount', 'AuthPassword')";
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            present.Add(reader.GetString(0));
+        }
+
+        return present;
+    }
+
+    private static async Task<object?> SqliteScalarAsync(
+        System.Data.Common.DbConnection connection,
+        System.Data.Common.DbTransaction? transaction,
+        string sql,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = sql;
+        var value = await command.ExecuteScalarAsync(cancellationToken);
+        return value is DBNull ? null : value;
+    }
+
+    private static async Task SqliteExecuteAsync(
+        System.Data.Common.DbConnection connection,
+        System.Data.Common.DbTransaction? transaction,
+        string sql,
+        CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = sql;
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Splits the body of a CREATE TABLE statement at the commas of its top level. Commas inside parentheses
+    /// and inside quoted names or text do not split.
+    /// </summary>
+    private static List<string> SplitSqliteDefinitions(string body)
+    {
+        var parts = new List<string>();
+        var depth = 0;
+        var start = 0;
+        char? quote = null;
+        for (var index = 0; index < body.Length; index++)
+        {
+            var character = body[index];
+            if (quote is not null)
+            {
+                if (character == quote)
+                {
+                    quote = null;
+                }
+
+                continue;
+            }
+
+            switch (character)
+            {
+                case '"' or '\'' or '`':
+                    quote = character;
+                    break;
+                case '[':
+                    quote = ']';
+                    break;
+                case '(':
+                    depth++;
+                    break;
+                case ')':
+                    depth--;
+                    break;
+                case ',' when depth == 0:
+                    parts.Add(body[start..index]);
+                    start = index + 1;
+                    break;
+            }
+        }
+
+        parts.Add(body[start..]);
+        return parts;
+    }
+
+    private static bool IsLegacyColumnDefinition(string definition)
+    {
+        var text = definition.TrimStart();
+        if (text.Length == 0)
+        {
+            return false;
+        }
+
+        string name;
+        if (text[0] is '"' or '`' or '[')
+        {
+            var closing = text[0] == '[' ? ']' : text[0];
+            var end = text.IndexOf(closing, 1);
+            name = end < 0 ? text : text[1..end];
+        }
+        else
+        {
+            var end = text.IndexOfAny([' ', '\t', '\r', '\n']);
+            name = end < 0 ? text : text[..end];
+        }
+
+        return LegacyCredentialColumns.Contains(name, StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static async Task ApplyPostgresqlLegacyCredentialContractAsync(DbContext ctx, CancellationToken cancellationToken)
+    {
+        var connection = ctx.Database.GetDbConnection();
+        var openedHere = connection.State != System.Data.ConnectionState.Open;
+        if (openedHere)
+        {
+            await connection.OpenAsync(cancellationToken);
+        }
+
+        try
+        {
+            await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+            try
+            {
+                var present = new List<string>();
+                await using (var command = connection.CreateCommand())
+                {
+                    command.Transaction = transaction;
+                    command.CommandText =
+                        "SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() " +
+                        "AND table_name = 'Repositories' AND column_name IN ('AuthAccount', 'AuthPassword')";
+                    await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+                    while (await reader.ReadAsync(cancellationToken))
+                    {
+                        present.Add(reader.GetString(0));
+                    }
+                }
+
+                if (present.Count > 0)
+                {
+                    var credentialTest = string.Join(" OR ", present.Select(column => $"btrim(coalesce(\"{column}\", '')) <> ''"));
+                    await using var gate = connection.CreateCommand();
+                    gate.Transaction = transaction;
+                    gate.CommandText =
+                        "SELECT COUNT(*) FROM \"Repositories\" WHERE \"IsDeleted\" = FALSE AND " +
+                        $"((\"GitConnectionId\" IS NULL AND ({credentialTest})) OR \"GitUrl\" LIKE '%://%@%')";
+                    var blocked = Convert.ToInt64(await gate.ExecuteScalarAsync(cancellationToken));
+                    if (blocked > 0)
+                    {
+                        throw ContractBlocked(blocked);
+                    }
+
+                    foreach (var column in LegacyCredentialColumns)
+                    {
+                        await using var drop = connection.CreateCommand();
+                        drop.Transaction = transaction;
+                        drop.CommandText = $"ALTER TABLE \"Repositories\" DROP COLUMN IF EXISTS \"{column}\"";
+                        await drop.ExecuteNonQueryAsync(cancellationToken);
+                    }
+                }
+
+                await transaction.CommitAsync(cancellationToken);
+            }
+            catch
+            {
+                await transaction.RollbackAsync(CancellationToken.None);
+                throw;
+            }
+        }
+        finally
+        {
+            if (openedHere)
+            {
+                await connection.CloseAsync();
+            }
+        }
     }
 }

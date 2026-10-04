@@ -64,9 +64,9 @@ export function AppFormDialog({
   const [rateLimitPerMinute, setRateLimitPerMinute] = useState("");
   const [isActive, setIsActive] = useState(true);
 
-  useEffect(() => {
-    if (!open) return;
-
+  const [formSource, setFormSource] = useState<Pick<AppFormDialogProps, "open" | "app">>({ open: false, app: undefined });
+  if (open && (formSource.open !== open || formSource.app !== app)) {
+    setFormSource({ open, app });
     if (app) {
       setName(app.name);
       setDescription(app.description || "");
@@ -90,7 +90,16 @@ export function AppFormDialog({
     }
 
     setError(null);
-  }, [open, app]);
+  } else if (formSource.open !== open) {
+    setFormSource({ open, app });
+  }
+
+  const [modelsProviderId, setModelsProviderId] = useState(aiProviderId);
+  if (modelsProviderId !== aiProviderId) {
+    setModelsProviderId(aiProviderId);
+    setAiModels([]);
+    if (!aiProviderId) setDefaultModel("");
+  }
 
   useEffect(() => {
     if (!open) return;
@@ -110,11 +119,7 @@ export function AppFormDialog({
   }, [open, app?.aiProviderId]);
 
   useEffect(() => {
-    if (!aiProviderId) {
-      setAiModels([]);
-      setDefaultModel("");
-      return;
-    }
+    if (!aiProviderId) return;
 
     let isMounted = true;
 

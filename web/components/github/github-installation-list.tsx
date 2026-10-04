@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import Image from "next/image";
 import { Badge } from "@/components/ui/badge";
 import { Building2 } from "lucide-react";
 
@@ -36,7 +37,7 @@ export function GitHubInstallationList({
         >
           <div className="flex items-center gap-3">
             {inst.avatarUrl && (
-              <img
+              <Image unoptimized width={32} height={32}
                 src={inst.avatarUrl}
                 alt={inst.accountLogin}
                 className="h-8 w-8 rounded-full"

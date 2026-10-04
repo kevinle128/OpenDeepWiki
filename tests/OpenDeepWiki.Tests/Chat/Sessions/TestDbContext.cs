@@ -60,6 +60,9 @@ public class TestDbContext : DbContext, IContext
     public DbSet<McpUsageLog> McpUsageLogs { get; set; }
     public DbSet<McpDailyStatistics> McpDailyStatistics { get; set; }
     public DbSet<ApiKey> ApiKeys { get; set; }
+    public DbSet<GitConnection> GitConnections { get; set; } = null!;
+    public DbSet<GitConnectionAuditEvent> GitConnectionAuditEvents { get; set; } = null!;
+    public DbSet<GitCredentialMigrationRecord> GitCredentialMigrationRecords { get; set; } = null!;
     public DbSet<ChatShareSnapshot> ChatShareSnapshots { get; set; } = default!;
     
     public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)

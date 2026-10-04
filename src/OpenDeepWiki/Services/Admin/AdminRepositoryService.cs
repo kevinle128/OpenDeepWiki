@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using OpenDeepWiki.EFCore;
 using OpenDeepWiki.Entities;
 using OpenDeepWiki.Models.Admin;
+using OpenDeepWiki.Services.Auth;
 using OpenDeepWiki.Services.Repositories;
 using OpenDeepWiki.Services.Wiki;
 
@@ -20,6 +21,8 @@ public class AdminRepositoryService : IAdminRepositoryService
     private readonly IRepositoryFullRegenerationCleaner _fullRegenerationCleaner;
     private readonly IRepositoryScanPlanResolver _scanPlanResolver;
     private readonly IRepositoryGenerationLockService _generationLockService;
+    private readonly IUserContext _userContext;
+    private readonly IBranchActionAuditor _branchActionAuditor;
 
     public AdminRepositoryService(
         IContext context,
@@ -28,7 +31,9 @@ public class AdminRepositoryService : IAdminRepositoryService
         IWikiGenerator wikiGenerator,
         IRepositoryFullRegenerationCleaner fullRegenerationCleaner,
         IRepositoryScanPlanResolver scanPlanResolver,
-        IRepositoryGenerationLockService generationLockService)
+        IRepositoryGenerationLockService generationLockService,
+        IUserContext userContext,
+        IBranchActionAuditor branchActionAuditor)
     {
         _context = context;
         _gitPlatformService = gitPlatformService;
@@ -37,6 +42,8 @@ public class AdminRepositoryService : IAdminRepositoryService
         _fullRegenerationCleaner = fullRegenerationCleaner;
         _scanPlanResolver = scanPlanResolver;
         _generationLockService = generationLockService;
+        _userContext = userContext;
+        _branchActionAuditor = branchActionAuditor;
     }
 
     public async Task<AdminRepositoryListResponse> GetRepositoriesAsync(int page, int pageSize, string? search, int? status)
@@ -61,9 +68,9 @@ public class AdminRepositoryService : IAdminRepositoryService
             .Select(r => new AdminRepositoryDto
             {
                 Id = r.Id,
-                GitUrl = r.SourceLocation,
+                GitUrl = RepositorySource.RedactUserInfo(r.SourceLocation),
                 SourceType = r.SourceType,
-                SourceLocation = r.SourceLocation,
+                SourceLocation = RepositorySource.RedactUserInfo(r.SourceLocation),
                 RepoName = r.RepoName,
                 OrgName = r.OrgName,
                 IsPublic = r.IsPublic,
@@ -138,9 +145,9 @@ public class AdminRepositoryService : IAdminRepositoryService
         return new AdminRepositoryDto
         {
             Id = repo.Id,
-            GitUrl = repo.SourceLocation,
+            GitUrl = RepositorySource.RedactUserInfo(repo.SourceLocation),
             SourceType = repo.SourceType,
-            SourceLocation = repo.SourceLocation,
+            SourceLocation = RepositorySource.RedactUserInfo(repo.SourceLocation),
             RepoName = repo.RepoName,
             OrgName = repo.OrgName,
             IsPublic = repo.IsPublic,
@@ -178,16 +185,51 @@ public class AdminRepositoryService : IAdminRepositoryService
 
         if (repo == null) return false;
 
+        // Credentials are no longer written. An Admin who replaced a password before now assigns a connection.
+        if (!string.IsNullOrWhiteSpace(request.AuthAccount) || !string.IsNullOrWhiteSpace(request.AuthPassword))
+            throw RepositoryConnectionRequestException.LegacyCredentialFields();
+
+        var newConnection = string.IsNullOrWhiteSpace(request.GitConnectionId)
+            ? null
+            : await FindAssignableConnectionAsync(repo, request.GitConnectionId.Trim());
+
         if (request.IsPublic.HasValue)
             repo.IsPublic = request.IsPublic.Value;
-        if (request.AuthAccount != null)
-            repo.AuthAccount = request.AuthAccount;
-        if (request.AuthPassword != null)
-            repo.AuthPassword = request.AuthPassword;
+        if (newConnection != null && newConnection.Id != repo.GitConnectionId)
+            AssignConnection(repo, newConnection);
 
         repo.UpdatedAt = DateTime.UtcNow;
         await _context.SaveChangesAsync();
         return true;
+    }
+
+    /// <summary>
+    /// The connection must exist, be enabled, and belong to the Git server of the repository, so reassigning
+    /// cannot send a credential to another host.
+    /// </summary>
+    private async Task<GitConnection> FindAssignableConnectionAsync(Repository repo, string connectionId)
+    {
+        var connection = await _context.GitConnections
+            .AsNoTracking()
+            .FirstOrDefaultAsync(item => item.Id == connectionId && !item.IsDeleted)
+            ?? throw RepositoryConnectionRequestException.ConnectionNotFound();
+        if (!connection.IsEnabled)
+            throw RepositoryConnectionRequestException.ConnectionDisabled();
+        if (!GitRemoteOriginGuard.IsSameOrigin(repo.GitUrl, connection.NormalizedServerUrl))
+            throw RepositoryConnectionRequestException.ConnectionHostMismatch();
+
+        return connection;
+    }
+
+    private void AssignConnection(Repository repo, GitConnection connection)
+    {
+        var actor = _userContext.UserId;
+        // The unassign event names the old connection, so it is staged before the ID changes.
+        _branchActionAuditor.Stage(repo, actor, GitConnectionAuditEventType.RepositoryUnassigned);
+        repo.GitConnectionId = connection.Id;
+        repo.Provider = connection.Provider;
+        repo.ProviderBaseUrl = connection.NormalizedServerUrl;
+        _branchActionAuditor.Stage(repo, actor, GitConnectionAuditEventType.RepositoryAssigned);
     }
 
     public async Task<bool> DeleteRepositoryAsync(string id)

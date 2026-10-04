@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState, useEffect, useId, useCallback } from "react";
+import React, { useMemo, useState, useEffect, useId, useCallback, useSyncExternalStore } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
@@ -13,6 +13,8 @@ interface MarkdownRendererProps {
   content: string;
   language?: string;
 }
+
+const subscribe = () => () => {};
 
 interface CodeBlockProps {
   code: string;
@@ -164,16 +166,13 @@ function MermaidFullscreenModal({
     if (isOpen) {
       document.addEventListener("keydown", handleKeyDown);
       document.body.style.overflow = "hidden";
-    } else {
-      // 关闭时重置状态
-      resetView();
     }
 
     return () => {
       document.removeEventListener("keydown", handleKeyDown);
       document.body.style.overflow = "";
     };
-  }, [isOpen, onClose, resetView]);
+  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 
@@ -336,12 +335,12 @@ function MermaidDiagram({ code, isDark, locale }: { code: string; isDark: boolea
           <Maximize2 className="h-4 w-4 text-muted-foreground" />
         </div>
       </div>
-        <MermaidFullscreenModal 
+      {isFullscreen && <MermaidFullscreenModal
           svg={svg} 
           isOpen={isFullscreen} 
           onClose={handleCloseFullscreen}
           locale={locale}
-        />
+        />}
     </>
   );
 }
@@ -468,12 +467,7 @@ export function MarkdownRenderer({ content, language }: MarkdownRendererProps) {
         ? "ko"
         : "zh";
   const { resolvedTheme } = useTheme();
-  const [mounted, setMounted] = useState(false);
-  
-  // 等待客户端挂载后再确定主题
-  useEffect(() => {
-    setMounted(true);
-  }, []);
+  const mounted = useSyncExternalStore(subscribe, () => true, () => false);
   
   // 默认使用暗色主题，挂载后使用实际主题
   const isDark = mounted ? resolvedTheme === "dark" : true;
@@ -485,7 +479,7 @@ export function MarkdownRenderer({ content, language }: MarkdownRendererProps) {
   }, [content]);
 
   // 追踪每个 heading text 使用的次数
-  const usedCounts = useMemo(() => new Map<string, number>(), [content]);
+  const usedCounts = new Map<string, number>();
 
   const getHeadingId = (text: string) => {
     const normalizedText = text

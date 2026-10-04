@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import Image from "next/image"
 import { useTranslations } from "next-intl"
 import { MessageCircle, X, Send, Loader2, Trash2, RefreshCw } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -141,7 +142,7 @@ export function EmbedChatWidget({
     }
 
     loadConfig()
-  }, [appId, apiBaseUrl])
+  }, [appId, apiBaseUrl, t])
 
   // 滚动到底部
   React.useEffect(() => {
@@ -327,7 +328,7 @@ export function EmbedChatWidget({
                   const errorData = event.data as ErrorInfo
                   throw new Error(errorData.message || 'Chat request failed')
                 }
-              } catch (parseError) {
+    } catch {
                 // 可能是纯文本内容
                 if (typeof dataStr === 'string' && dataStr.trim()) {
                   assistantContent += dataStr
@@ -474,7 +475,7 @@ export function EmbedChatWidget({
         {isOpen ? (
           <X className="h-6 w-6" />
         ) : iconUrl ? (
-          <img
+          <Image unoptimized width={32} height={32}
             src={iconUrl}
             alt={t("assistant.title")}
             className="h-8 w-8 rounded-full object-cover"
@@ -680,11 +681,9 @@ export function EmbedChatWidget({
  * 消息内容组件 - 简单的Markdown渲染
  */
 function MessageContent({ content, isDark }: { content: string; isDark: boolean }) {
-  if (!content) return null
-
   // 简单的Markdown处理
   const processedContent = React.useMemo(() => {
-    let html = content
+    const html = content
       // 转义HTML
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
@@ -706,6 +705,8 @@ function MessageContent({ content, isDark }: { content: string; isDark: boolean 
 
     return html
   }, [content, isDark])
+
+  if (!content) return null
 
   return (
     <div 

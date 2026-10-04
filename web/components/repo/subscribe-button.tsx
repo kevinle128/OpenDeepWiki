@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Bell, BellOff, Loader2 } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
@@ -14,9 +15,15 @@ interface SubscribeButtonProps {
 
 export function SubscribeButton({ repositoryId, subscriptionCount = 0, onCountChange }: SubscribeButtonProps) {
   const { user, isAuthenticated } = useAuth();
+  const router = useRouter();
   const [isSubscribed, setIsSubscribed] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [count, setCount] = useState(subscriptionCount);
+  const [previousCount, setPreviousCount] = useState(subscriptionCount);
+  if (previousCount !== subscriptionCount) {
+    setPreviousCount(subscriptionCount);
+    setCount(subscriptionCount);
+  }
 
   useEffect(() => {
     if (isAuthenticated && user?.id) {
@@ -26,14 +33,10 @@ export function SubscribeButton({ repositoryId, subscriptionCount = 0, onCountCh
     }
   }, [repositoryId, user?.id, isAuthenticated]);
 
-  useEffect(() => {
-    setCount(subscriptionCount);
-  }, [subscriptionCount]);
-
   const handleClick = async () => {
     if (!isAuthenticated || !user?.id) {
       // Redirect to login or show login prompt
-      window.location.href = "/auth";
+      router.push("/auth");
       return;
     }
 

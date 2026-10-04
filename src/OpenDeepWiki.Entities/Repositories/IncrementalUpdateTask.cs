@@ -82,6 +82,12 @@ public class IncrementalUpdateTask : AggregateRoot<string>
     public bool IsManualTrigger { get; set; } = false;
 
     /// <summary>
+    /// User who requested a manual update. Null for scheduled work.
+    /// </summary>
+    [StringLength(36)]
+    public string? RequestedBy { get; set; }
+
+    /// <summary>
     /// 重试次数
     /// </summary>
     public int RetryCount { get; set; } = 0;

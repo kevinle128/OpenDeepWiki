@@ -258,11 +258,6 @@
   }
 
 
-  // 生成唯一ID
-  function generateId() {
-    return 'odw-' + Math.random().toString(36).substr(2, 9);
-  }
-
   // 创建DOM元素
   function createElement(tag, attrs, children) {
     var el = document.createElement(tag);
@@ -386,7 +381,7 @@
                 } else if (event.type === 'error') {
                   onError(new Error(event.data.message || '对话失败'));
                 }
-              } catch (e) {
+              } catch {
                 // 可能是纯文本内容
                 onContent(dataStr);
               }
@@ -872,7 +867,7 @@
 
     // 验证配置
     state.isLoading = true;
-    validateAndGetConfig(function(error, appConfig) {
+    validateAndGetConfig(function(error) {
       state.isLoading = false;
 
       if (error) {

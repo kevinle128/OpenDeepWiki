@@ -137,16 +137,14 @@ export default function AdminChatAssistantPage() {
   const [selectedModelIds, setSelectedModelIds] = useState<string[]>([]);
   const [selectedMcpIds, setSelectedMcpIds] = useState<string[]>([]);
   const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([]);
-  const [defaultModelId, setDefaultModelId] = useState<string | undefined>();
+  const [defaultModelId, setDefaultModelId] = useState<string | undefined>(undefined);
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const [result, providers, models] = await Promise.all([
+  const loadData = useCallback(() => {
+    return Promise.all([
         getChatAssistantConfig(),
         getAiProviders().catch(() => []),
         getAiModels().catch(() => []),
-      ]);
+      ]).then(([result, providers, models]) => {
       setConfigOptions(result);
       setAiProviders(providers);
       setAiModels(models);
@@ -156,17 +154,22 @@ export default function AdminChatAssistantPage() {
       setSelectedMcpIds(result.config.enabledMcpIds);
       setSelectedSkillIds(result.config.enabledSkillIds);
       setDefaultModelId(result.config.defaultModelId);
-    } catch (error) {
+    }).catch(error => {
       console.error("Failed to fetch chat assistant config:", error);
       toast.error(t('admin.toast.fetchConfigFailed'));
-    } finally {
+    }).finally(() => {
       setLoading(false);
-    }
-  }, [t]);
+    });
+  }, [t, setDefaultModelId]);
+
+  const fetchData = useCallback(() => {
+    setLoading(true);
+    return loadData();
+  }, [loadData]);
 
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    void loadData();
+  }, [loadData]);
 
   const handleSave = async () => {
     setSaving(true);

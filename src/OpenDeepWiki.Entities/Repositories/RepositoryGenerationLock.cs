@@ -22,6 +22,12 @@ public class RepositoryGenerationLock : AggregateRoot<string>
     [StringLength(36)]
     public string RepositoryId { get; set; } = string.Empty;
 
+    /// <summary>
+    /// Branch that the lock covers. Null for a repository-scope lock, which excludes every branch lock.
+    /// </summary>
+    [StringLength(36)]
+    public string? BranchId { get; set; }
+
     public RepositoryGenerationLockOwnerType OwnerType { get; set; }
 
     [Required]
@@ -43,4 +49,7 @@ public class RepositoryGenerationLock : AggregateRoot<string>
 
     [ForeignKey("RepositoryId")]
     public virtual Repository? Repository { get; set; }
+
+    [ForeignKey("BranchId")]
+    public virtual RepositoryBranch? Branch { get; set; }
 }

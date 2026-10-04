@@ -63,22 +63,25 @@ export default function AdminRolesPage() {
   const locale = useLocale();
   const dateLocale = locale === "zh" ? "zh-CN" : locale;
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const result = await getRoles();
+  const loadData = useCallback(() => {
+    return getRoles().then((result) => {
       setRoles(result);
-    } catch (error) {
+    }).catch(error => {
       console.error("Failed to fetch roles:", error);
       toast.error(t("admin.toast.fetchRoleFailed"));
-    } finally {
+    }).finally(() => {
       setLoading(false);
-    }
+    });
   }, [t]);
 
+  const fetchData = useCallback(() => {
+    setLoading(true);
+    return loadData();
+  }, [loadData]);
+
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    void loadData();
+  }, [loadData]);
 
   const openCreateDialog = () => {
     setEditingRole(null);

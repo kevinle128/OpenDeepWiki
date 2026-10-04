@@ -129,6 +129,7 @@ async function proxyRequest(request: NextRequest) {
       method: request.method,
       headers,
       body: request.body,
+      signal: request.signal,
       // @ts-expect-error duplex is required for streaming body
       duplex: 'half',
     });

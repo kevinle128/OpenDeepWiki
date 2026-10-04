@@ -5,24 +5,25 @@
     "": {
       "name": "docs",
       "dependencies": {
-        "@types/mdx": "^2.0.13",
-        "fumadocs-core": "^16.5.1",
-        "fumadocs-mdx": "^14.2.6",
-        "fumadocs-ui": "^16.5.1",
+        "@types/mdx": "^2.0.14",
+        "fumadocs-core": "^16.15.1",
+        "fumadocs-mdx": "^14.3.2",
+        "fumadocs-ui": "^16.15.1",
         "lucide-react": "^0.563.0",
         "next": "^16.3.2",
         "react": "^19.2.8",
         "react-dom": "^19.2.8",
+        "tailwind-merge": "^3.7.0",
       },
       "devDependencies": {
-        "@tailwindcss/postcss": "^4",
-        "@types/node": "^20",
-        "@types/react": "^19",
-        "@types/react-dom": "^19",
-        "eslint": "^9",
+        "@tailwindcss/postcss": "^4.3.3",
+        "@types/node": "^20.19.43",
+        "@types/react": "^19.2.18",
+        "@types/react-dom": "^19.2.5",
+        "eslint": "^9.39.5",
         "eslint-config-next": "^16.3.2",
-        "tailwindcss": "^4",
-        "typescript": "^5",
+        "tailwindcss": "^4.3.3",
+        "typescript": "^5.9.3",
       },
     },
   },
@@ -1250,6 +1251,8 @@
     "supports-color": ["supports-color@7.2.0", "", { "dependencies": { "has-flag": "^4.0.0" } }, "sha512-qpCAvRl9stuOHveKsn7HncJRvv501qIacKzQlO/+Lwxc9+0q2wLyv4Dfvt80/DPn2pqOBsJdDiogXGR9+OvwRw=="],
 
     "supports-preserve-symlinks-flag": ["supports-preserve-symlinks-flag@1.0.0", "", {}, "sha512-ot0WnXS9fgdkgIcePe6RHNk1WA8+muPa6cSjeR3V8K27q9BB1rTE3R1p7Hv0z1ZyAc8s6Vvv8DIyWf681MAt0w=="],
+
+    "tailwind-merge": ["tailwind-merge@3.7.0", "", {}, "sha512-XPPUyAc+cvspz3lHTcR/QgPfW2A0lv/xQNIjX3HGhLR+Nq2lHaLq5MtTesHn8GUr3W3DguT2KT5x3NVgRtYwmA=="],
 
     "tailwindcss": ["tailwindcss@4.3.3", "", {}, "sha512-gOhV3P7ufE62QDGg1zVaTgCR+EtPv92k2nIhVcVKcLmxT1sUBsQGhnZj175j+MqRt4zLF7ic+sCYjfhxMxj7YQ=="],
 

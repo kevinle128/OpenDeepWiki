@@ -3,6 +3,7 @@ using System.Reflection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using OpenDeepWiki.Entities;
+using OpenDeepWiki.Services.GitConnections;
 using OpenDeepWiki.Services.Repositories;
 using Xunit;
 using GitCloneOptions = LibGit2Sharp.CloneOptions;
@@ -282,7 +283,7 @@ public class RepositoryAnalyzerSourceTests
         Assert.Equal(bCommit, workspace.CommitId);
         Assert.Equal("B branch", File.ReadAllText(Path.Combine(workspace.WorkingDirectory, "branch.txt")));
         using var workspaceRepository = new GitRepository(workspace.WorkingDirectory);
-        Assert.Equal(NormalizePath(workspace.WorkingDirectory), NormalizePath(workspaceRepository.Info.WorkingDirectory));
+        Assert.Equal(ResolvePhysicalPath(workspace.WorkingDirectory), ResolvePhysicalPath(workspaceRepository.Info.WorkingDirectory));
     }
 
     [Fact]
@@ -429,6 +430,30 @@ public class RepositoryAnalyzerSourceTests
     }
 
     [Fact]
+    public async Task PrepareWorkspaceAsync_WhenLocalGitSourceParentIsSymbolicLink_UsesTargetBranchHead()
+    {
+        var sourceParent = CreateTempDirectory();
+        var sourceRoot = Path.Combine(sourceParent, "source");
+        Directory.CreateDirectory(sourceRoot);
+        var (_, bCommit) = CreateGitRepositoryWithBranches(sourceRoot, "release/stable", "feature/docs-refresh");
+        var linkedParent = Path.Combine(CreateTempDirectory(), "source-link");
+        Directory.CreateSymbolicLink(linkedParent, sourceParent);
+        var linkedSource = Path.Combine(linkedParent, "source");
+        var repositoriesRoot = CreateTempDirectory();
+        var analyzer = CreateAnalyzer(repositoriesRoot, new RepositoryAnalyzerOptions
+        {
+            RepositoriesDirectory = repositoriesRoot,
+            AllowedLocalPathRoots = [linkedParent]
+        });
+
+        var workspace = await analyzer.PrepareWorkspaceAsync(CreateLocalSourceRepository(linkedSource), "feature/docs-refresh");
+
+        Assert.True(workspace.SupportsIncrementalUpdates);
+        Assert.Equal(bCommit, workspace.CommitId);
+        Assert.Equal("B branch", File.ReadAllText(Path.Combine(workspace.WorkingDirectory, "branch.txt")));
+    }
+
+    [Fact]
     public void BuildGitCliSafeDirectories_WhenSourceIsGitWorktree_IncludesWorktreeGitFileAndCommonGitDir()
     {
         var sourceRoot = CreateTempDirectory();
@@ -548,7 +573,21 @@ public class RepositoryAnalyzerSourceTests
                 RepositoriesDirectory = repositoriesRoot,
                 AllowedLocalPathRoots = []
             }),
-            NullLogger<RepositoryAnalyzer>.Instance);
+            NullLogger<RepositoryAnalyzer>.Instance,
+            new NoCredentialResolver());
+    }
+
+    private sealed class NoCredentialResolver : IGitCredentialResolver
+    {
+        public Task<GitCredential?> ResolveAsync(
+            Repository repository,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<GitCredential?>(null);
+
+        public Task<bool> HasUsableCredentialAsync(
+            Repository repository,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult(false);
     }
 
     private static IReadOnlyList<string> InvokeBuildGitCliSafeDirectories(params string[] paths)
@@ -686,8 +725,21 @@ public class RepositoryAnalyzerSourceTests
             path = uri.LocalPath;
         }
 
-        return Path.GetFullPath(path)
-            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        return Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+    }
+
+    private static string ResolvePhysicalPath(string path)
+    {
+        var directory = new DirectoryInfo(NormalizePath(path));
+        var target = directory.ResolveLinkTarget(returnFinalTarget: true);
+        if (target != null)
+        {
+            return ResolvePhysicalPath(target.FullName);
+        }
+
+        return directory.Parent == null
+            ? directory.FullName
+            : Path.Combine(ResolvePhysicalPath(directory.Parent.FullName), directory.Name);
     }
 
     private static (string ACommit, string BCommit) CreateGitRepositoryWithBranches(

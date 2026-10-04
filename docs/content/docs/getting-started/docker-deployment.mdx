@@ -15,10 +15,10 @@ import { Callout } from "fumadocs-ui/components/callout";
 
 | 服务 | 容器端口 | 默认宿主机映射 | 描述 |
 |---|---|---|---|
-| `opendeepwiki` | `8080` | `8081` | 带有 AI 处理的 ASP.NET Core API |
+| `opendeepwiki` | `8080` | `18081` | 带有 AI 处理的 ASP.NET Core API |
 | `web` | `3000` | `8090` | Next.js 前端应用 |
 
-前端通过内部网络的 `API_PROXY_URL=http://opendeepwiki:8080` 访问后端。
+`compose.pgsql.yaml` 使用 `8080` 和 `3000`，并增加 `postgres` 服务。前端通过内部网络的 `API_PROXY_URL=http://opendeepwiki:8080` 访问后端。两个 compose 文件都要求设置 `JWT_SECRET_KEY`（至少 32 字节的随机值），否则 `docker compose` 报错并拒绝启动。
 
 ## 构建镜像
 
@@ -82,14 +82,17 @@ volumes:
 此目录包含：
 - SQLite 数据库文件（如果使用 SQLite）
 - 用于分析的克隆仓库文件
+- Data Protection 密钥环 `./data/dataprotection-keys`，用来解密已保存的 Git 连接令牌
 
 <Callout type="warn">
-  在生产环境中定期备份 `./data` 目录。它包含所有生成的文档和仓库数据。
+  在生产环境中定期备份 `./data` 目录。它包含所有生成的文档和仓库数据。数据库和密钥环必须一起备份、一起恢复：
+  丢失密钥环后，所有已保存的 Git 连接令牌都无法读取，必须在工作区中重新输入。
+  备份、升级步骤和冒烟检查见 [Docker Compose 部署](/docs/deployment/docker-compose#git-connection-secrets)。
 </Callout>
 
 ## 健康检查
 
-后端包含内置的健康检查端点 `/health`（`compose.pgsql.yaml` 中已配置容器健康检查）：
+后端包含内置的健康检查端点 `/health`（`compose.yaml` 和 `compose.pgsql.yaml` 中都已配置容器健康检查，`web` 在后端健康后才启动）：
 
 ```yaml
 healthcheck:
@@ -99,6 +102,18 @@ healthcheck:
   retries: 3
   start_period: 15s
 ```
+
+## 升级后的冒烟检查
+
+升级前先备份数据库和密钥环。升级后运行：
+
+```bash
+docker compose ps                          # opendeepwiki 为 healthy
+curl --fail http://localhost:18081/health  # compose.pgsql.yaml 使用 8080
+curl --fail http://localhost:8090/         # compose.pgsql.yaml 使用 3000
+```
+
+升级后的第一次启动会改用 `JWT_SECRET_KEY` 签名，所有用户需要重新登录一次。后端的致命启动错误（例如 Production 环境缺少密钥环路径）会以退出码 1 结束进程，原因在 `docker compose logs opendeepwiki` 中。如果旧版本把私有仓库的密码明文保存在数据库中，见 [旧凭据迁移](/docs/deployment/legacy-credential-migration)。
 
 ## 数据库配置
 
@@ -153,7 +168,7 @@ OpenDeepWiki 为不同任务使用独立的 AI 配置：
 
 ### Sealos
 
-一键部署 OpenDeepWiki 到 Sealos：
+一键部署 OpenDeepWiki 到 Sealos。模板把 `DataProtection__KeyRingPath` 设为 `/data/dataprotection-keys`，该目录位于持久卷 `/data` 内，并默认生成随机的 `JWT_SECRET_KEY`：
 
 [![Deploy on Sealos](https://raw.githubusercontent.com/labring-actions/templates/main/Deploy-on-Sealos.svg)](https://bja.sealos.run/?openapp=system-template%3FtemplateName%3DOpenDeepWiki)
 

@@ -111,6 +111,12 @@ export default function AdminRepositoriesPage() {
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
+  const queryKey = JSON.stringify([page, pageSize, search, status]);
+  const [loadingQuery, setLoadingQuery] = useState(queryKey);
+  if (loadingQuery !== queryKey) {
+    setLoadingQuery(queryKey);
+    setLoading(true);
+  }
   const [selectedRepo, setSelectedRepo] = useState<AdminRepository | null>(
     null
   );
@@ -146,28 +152,31 @@ export default function AdminRepositoriesPage() {
     [t]
   );
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const result = await getRepositories(
+  const loadData = useCallback(() => {
+    return getRepositories(
         page,
         pageSize,
         search || undefined,
         status === "all" ? undefined : parseInt(status)
-      );
+      ).then((result) => {
       setData(result);
       setSelectedIds(new Set());
-    } catch (error) {
+    }).catch(error => {
       console.error("Failed to fetch repositories:", error);
       toast.error(t("admin.toast.fetchRepoFailed"));
-    } finally {
+    }).finally(() => {
       setLoading(false);
-    }
+    });
   }, [page, pageSize, search, status, t]);
 
+  const fetchData = useCallback(() => {
+    setLoading(true);
+    return loadData();
+  }, [loadData]);
+
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    void loadData();
+  }, [loadData]);
 
   // Debounced search: reset to page 1 when the keyword settles.
   const handleSearchInput = (value: string) => {

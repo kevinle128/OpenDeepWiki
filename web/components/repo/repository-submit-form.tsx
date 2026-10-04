@@ -39,9 +39,12 @@ import {
   FolderOpen,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { errorKey } from "@/components/repositories/error-key";
+import { getErrorCode } from "@/lib/git-connections-api";
+import { PrivateConnectionPicker } from "./private-connection-picker";
 import { toast } from "sonner";
 import { ApiError } from "@/lib/api-client";
-import { defaultWikiLanguage, wikiLanguageCodes } from "@/i18n/config";
+import { defaultWikiLanguage, defaultWikiLanguages } from "@/i18n/config";
 
 interface RepositorySubmitFormProps {
   onSuccess?: () => void;
@@ -49,7 +52,7 @@ interface RepositorySubmitFormProps {
 
 const GIT_URL_REGEX = /^(https?:\/\/|git@)[\w.-]+[/:].+?(\.git)?$/i;
 
-const SUPPORTED_LANGUAGES = wikiLanguageCodes;
+const SUPPORTED_LANGUAGES = defaultWikiLanguages.split(",");
 
 const SOURCE_OPTIONS: Array<{
   value: RepositorySourceType;
@@ -104,8 +107,7 @@ export function RepositorySubmitForm({ onSuccess }: RepositorySubmitFormProps) {
   const [languageCode, setLanguageCode] = useState<string>(defaultWikiLanguage);
   const [isPublic, setIsPublic] = useState(true);
   const [generateSkill, setGenerateSkill] = useState(true);
-  const [authAccount, setAuthAccount] = useState("");
-  const [authPassword, setAuthPassword] = useState("");
+  const [gitConnectionId, setGitConnectionId] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [fileInputKey, setFileInputKey] = useState(0);
@@ -136,8 +138,7 @@ export function RepositorySubmitForm({ onSuccess }: RepositorySubmitFormProps) {
     setLanguageCode("en");
     setIsPublic(true);
     setGenerateSkill(true);
-    setAuthAccount("");
-    setAuthPassword("");
+    setGitConnectionId("");
     setErrors({});
     setFileInputKey((current) => current + 1);
     resetGitBranchState();
@@ -193,12 +194,26 @@ export function RepositorySubmitForm({ onSuccess }: RepositorySubmitFormProps) {
     }
   }, [resetGitBranchState]);
 
+  const changeSourceType = (value: RepositorySourceType) => {
+    setSourceType(value);
+    if (value !== "Git") {
+      resetGitBranchState();
+      setGitConnectionId("");
+      setIsPublic(false);
+    }
+  };
+
+  const changeGitUrl = (value: string) => {
+    setGitUrl(value);
+    const parsed = parseGitUrl(value.trim());
+    if (parsed) {
+      setOrgName((current) => current.trim() || parsed.orgName);
+      setRepoName((current) => current.trim() || parsed.repoName);
+    }
+  };
+
   useEffect(() => {
     if (sourceType !== "Git") {
-      resetGitBranchState();
-      setAuthAccount("");
-      setAuthPassword("");
-      setIsPublic(false);
       return;
     }
 
@@ -210,20 +225,6 @@ export function RepositorySubmitForm({ onSuccess }: RepositorySubmitFormProps) {
 
     return () => clearTimeout(timer);
   }, [sourceType, gitUrl, fetchBranchesDebounced, resetGitBranchState]);
-
-  useEffect(() => {
-    if (sourceType !== "Git") {
-      return;
-    }
-
-    const parsed = parseGitUrl(gitUrl.trim());
-    if (!parsed) {
-      return;
-    }
-
-    setOrgName((current) => current.trim() || parsed.orgName);
-    setRepoName((current) => current.trim() || parsed.repoName);
-  }, [gitUrl, sourceType]);
 
   const filteredBranches = branches.filter((branch) =>
     branch.name.toLowerCase().includes(branchSearch.toLowerCase())
@@ -263,6 +264,10 @@ export function RepositorySubmitForm({ onSuccess }: RepositorySubmitFormProps) {
       newErrors.localPath = t("home.repository.localPathRequired");
     }
 
+    if (sourceType === "Git" && !isPublic && !gitConnectionId) {
+      newErrors.gitConnectionId = t("home.repository.connectionRequired");
+    }
+
     if (!branchName.trim()) {
       newErrors.branchName = t("home.repository.branchNameRequired");
     }
@@ -298,8 +303,9 @@ export function RepositorySubmitForm({ onSuccess }: RepositorySubmitFormProps) {
           languageCode,
           isPublic,
           generateSkill,
-          authAccount: authAccount.trim() || undefined,
-          authPassword: authPassword || undefined,
+          // A private repository is cloned through a shared Git connection. The form never carries a credential.
+          // A public repository sends no connection key at all.
+          ...(isPublic ? {} : { gitConnectionId }),
         };
 
         await submitRepository(request);
@@ -333,12 +339,14 @@ export function RepositorySubmitForm({ onSuccess }: RepositorySubmitFormProps) {
       resetForm();
       onSuccess?.();
     } catch (error) {
+      // The backend text is never shown. A stable code or status maps to localized text.
       const message =
-        error instanceof ApiError || error instanceof Error
-          ? error.message
+        error instanceof ApiError
+          ? t(`repositories.errors.${errorKey(error)}`)
           : t("home.repository.submitError");
-      toast.error(message || t("home.repository.submitError"));
-      console.error("Failed to submit repository:", error);
+      toast.error(message);
+      // The error object can carry provider text, so only the stable code is logged.
+      console.error("Failed to submit repository:", getErrorCode(error) ?? "unknown");
     } finally {
       setIsSubmitting(false);
     }
@@ -373,7 +381,7 @@ export function RepositorySubmitForm({ onSuccess }: RepositorySubmitFormProps) {
                     ? "border-teal-500 bg-teal-500/10 shadow-sm"
                     : "border-border bg-secondary/40 hover:bg-secondary/70"
                 )}
-                onClick={() => setSourceType(option.value)}
+                onClick={() => changeSourceType(option.value)}
               >
                 <div className="flex items-center gap-2 text-sm font-medium">
                   <Icon className="h-4 w-4" />
@@ -396,7 +404,7 @@ export function RepositorySubmitForm({ onSuccess }: RepositorySubmitFormProps) {
           </label>
           <Input
             value={gitUrl}
-            onChange={(event) => setGitUrl(event.target.value)}
+            onChange={(event) => changeGitUrl(event.target.value)}
             placeholder={t("home.repository.gitUrlPlaceholder")}
             aria-invalid={!!errors.gitUrl}
             className="h-11 border-transparent bg-secondary/50 transition-colors focus:border-primary/50"
@@ -622,30 +630,12 @@ export function RepositorySubmitForm({ onSuccess }: RepositorySubmitFormProps) {
       </div>
 
       {sourceType === "Git" && !isPublic && (
-        <div className="space-y-4 rounded-xl border border-amber-500/20 bg-amber-500/5 p-4">
-          <p className="text-xs font-medium text-amber-600 dark:text-amber-400">
-            {t("home.repository.authHint")}
-          </p>
-          <div className="space-y-2">
-            <label className="text-sm font-medium">{t("home.repository.authAccount")}</label>
-            <Input
-              value={authAccount}
-              onChange={(event) => setAuthAccount(event.target.value)}
-              placeholder={t("home.repository.authAccountPlaceholder")}
-              className="h-11 border-transparent bg-background/50 focus:border-primary/50"
-            />
-          </div>
-          <div className="space-y-2">
-            <label className="text-sm font-medium">{t("home.repository.authPassword")}</label>
-            <Input
-              type="password"
-              value={authPassword}
-              onChange={(event) => setAuthPassword(event.target.value)}
-              placeholder={t("home.repository.authPasswordPlaceholder")}
-              className="h-11 border-transparent bg-background/50 focus:border-primary/50"
-            />
-          </div>
-        </div>
+        <PrivateConnectionPicker
+          gitUrl={gitUrl}
+          value={gitConnectionId}
+          onChange={setGitConnectionId}
+          error={errors.gitConnectionId}
+        />
       )}
 
       <Button

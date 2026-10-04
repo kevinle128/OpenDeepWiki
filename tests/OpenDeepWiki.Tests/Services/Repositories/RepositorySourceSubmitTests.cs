@@ -10,6 +10,7 @@ using OpenDeepWiki.Models;
 using OpenDeepWiki.Models.Admin;
 using OpenDeepWiki.Services.Admin;
 using OpenDeepWiki.Services.Auth;
+using OpenDeepWiki.Services.GitConnections;
 using OpenDeepWiki.Services.GitHub;
 using OpenDeepWiki.Services.Organizations;
 using OpenDeepWiki.Services.Repositories;
@@ -972,15 +973,22 @@ public class RepositorySourceSubmitTests
         IGitPlatformService? gitPlatformService = null,
         bool isAdmin = false)
     {
+        var userContext = new TestUserContext(userId, isAdmin);
         return new RepositoryService(
             context,
             gitPlatformService ?? Mock.Of<IGitPlatformService>(),
-            new TestUserContext(userId, isAdmin),
+            userContext,
             Mock.Of<IGitHubAppService>(),
             Mock.Of<IOrganizationService>(),
             new RepositoryFullRegenerationCleaner(),
             new RepositoryGenerationLockService(context),
-            Options.Create(analyzerOptions));
+            Options.Create(analyzerOptions),
+            new GitCredentialResolver(
+                context,
+                Mock.Of<IGitConnectionSecretProtector>(),
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<GitCredentialResolver>.Instance),
+            new GitConnectionAuthorizationService(userContext, context),
+            new BranchActionAuditor(context, Microsoft.Extensions.Logging.Abstractions.NullLogger<BranchActionAuditor>.Instance));
     }
 
     private static async Task<RegenerateResponse> RegenerateAsync(
@@ -1057,7 +1065,9 @@ public class RepositorySourceSubmitTests
             Mock.Of<IWikiGenerator>(),
             fullRegenerationCleaner ?? new RepositoryFullRegenerationCleaner(),
             CreateScanPlanResolver(),
-            new RepositoryGenerationLockService(context));
+            new RepositoryGenerationLockService(context),
+            new TestUserContext("admin-1", isAdmin: true),
+            new BranchActionAuditor(context, Microsoft.Extensions.Logging.Abstractions.NullLogger<BranchActionAuditor>.Instance));
     }
 
     private static RepositoryScanPlanResolver CreateScanPlanResolver()

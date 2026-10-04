@@ -15,7 +15,6 @@ type AccordionContextType = {
 type AccordionItemContextType = {
   value: string;
   isOpen: boolean;
-  setIsOpen: (open: boolean) => void;
 };
 
 const [AccordionProvider, useAccordion] =
@@ -50,16 +49,12 @@ type AccordionItemProps = React.ComponentProps<typeof AccordionPrimitive.Item>;
 
 function AccordionItem(props: AccordionItemProps) {
   const { value } = useAccordion();
-  const [isOpen, setIsOpen] = React.useState(
-    value?.includes(props?.value) ?? false,
-  );
-
-  React.useEffect(() => {
-    setIsOpen(value?.includes(props?.value) ?? false);
-  }, [value, props?.value]);
+  const isOpen = Array.isArray(value)
+    ? value.includes(props.value)
+    : value === props.value;
 
   return (
-    <AccordionItemProvider value={{ isOpen, setIsOpen, value: props.value }}>
+    <AccordionItemProvider value={{ isOpen, value: props.value }}>
       <AccordionPrimitive.Item data-slot="accordion-item" {...props} />
     </AccordionItemProvider>
   );

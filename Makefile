@@ -8,7 +8,7 @@ NPM_EXISTS := $(shell if npm --version >/dev/null 2>&1; then echo "true"; else e
 # 检测 .NET CLI
 DOTNET_EXISTS := $(shell if dotnet --version >/dev/null 2>&1; then echo "true"; else echo "false"; fi)
 
-.PHONY: all build build-backend build-frontend build-docs build-arm build-amd build-backend-arm build-backend-amd up down restart dev dev-backend dev-web logs clean help test test-backend test-frontend lint lint-frontend format format-backend install install-frontend install-backend check-deps
+.PHONY: all build build-backend build-frontend build-docs build-arm build-amd build-backend-arm build-backend-amd up down restart dev dev-backend dev-web logs clean help test test-backend test-frontend test-e2e lint lint-frontend format format-backend install install-frontend install-backend check-deps
 
 all: build up
 
@@ -133,6 +133,21 @@ test-frontend:
 	fi
 	cd web && npm test
 
+# 运行端到端测试（Playwright，仅 Chromium，不包含在 make test 中）
+# 需要 .NET SDK 和 Node.js；首次运行前执行：cd web && npx playwright install chromium
+# 固定端口：web 4310、API 4311。端口被占用时测试会停止并指出占用进程。
+test-e2e:
+	@echo "Running end-to-end tests..."
+	@if [ "$(DOTNET_EXISTS)" = "false" ]; then \
+		echo "错误: .NET CLI 未安装，请先安装 .NET SDK"; \
+		exit 1; \
+	fi
+	@if [ "$(NODE_EXISTS)" = "false" ] || [ "$(NPM_EXISTS)" = "false" ]; then \
+		echo "错误: Node.js 或 npm 未安装，请先安装 Node.js"; \
+		exit 1; \
+	fi
+	cd web && npm run test:e2e
+
 # 代码检查
 lint: lint-frontend
 
@@ -192,6 +207,7 @@ help:
 	@echo "  make test               - 运行所有测试"
 	@echo "  make test-backend       - 运行后端测试"
 	@echo "  make test-frontend      - 运行前端测试"
+	@echo "  make test-e2e           - 运行端到端测试（Playwright）"
 	@echo "  make lint               - 运行代码检查"
 	@echo "  make lint-frontend      - 运行前端代码检查"
 	@echo "  make format             - 格式化代码"

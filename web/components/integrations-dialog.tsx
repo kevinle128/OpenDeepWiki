@@ -34,11 +34,18 @@ export function IntegrationsDialog({ open, onOpenChange }: IntegrationsDialogPro
   const { user } = useAuth();
   const isAdmin = user?.roles?.includes("Admin") ?? false;
 
-  const [slackLoading, setSlackLoading] = useState(false);
+  const [slackLoading, setSlackLoading] = useState(open);
   const [slackConnected, setSlackConnected] = useState(false);
-  const [slackError, setSlackError] = useState(false);
   const [mcpUrlCopied, setMcpUrlCopied] = useState(false);
   const [configCopied, setConfigCopied] = useState(false);
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) {
+      setSlackLoading(true);
+      setSlackConnected(false);
+    }
+  }
 
   const mcpUrl = typeof window !== "undefined" ? `${window.location.origin}/api/mcp` : "/api/mcp";
 
@@ -57,17 +64,13 @@ export function IntegrationsDialog({ open, onOpenChange }: IntegrationsDialogPro
   useEffect(() => {
     if (!open) return;
 
-    setSlackLoading(true);
-    setSlackError(false);
-    setSlackConnected(false);
-
     getChatProviderConfigs()
       .then((providers) => {
         const slack = providers.find((p) => p.platform === "slack");
         setSlackConnected(slack ? slack.isEnabled && slack.isRegistered : false);
       })
       .catch(() => {
-        setSlackError(true);
+        setSlackConnected(false);
       })
       .finally(() => {
         setSlackLoading(false);

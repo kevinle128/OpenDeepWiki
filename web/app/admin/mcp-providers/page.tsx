@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import Image from "next/image";
 import {
   getMcpProviders,
   createMcpProvider,
@@ -224,7 +225,7 @@ export default function AdminMcpProvidersPage() {
                     <div className="flex items-start justify-between">
                       <div className="flex items-center gap-2">
                         {provider.iconUrl ? (
-                          <img src={provider.iconUrl} alt="" className="h-6 w-6 rounded" />
+                          <Image src={provider.iconUrl} alt="" width={24} height={24} unoptimized className="h-6 w-6 rounded" />
                         ) : (
                           <Globe className="h-5 w-5 text-muted-foreground" />
                         )}

@@ -88,6 +88,10 @@ public class UserGitHubImportService : IUserGitHubImportService
             .ToListAsync(cancellationToken);
 
         var existingUrlSet = new HashSet<string>(existingUrls, StringComparer.OrdinalIgnoreCase);
+        var registeredRemoteIds = await GitHubAppRepositoryAdapter.FindRegisteredRemoteIdsAsync(
+            _context,
+            result.Repositories.Select(r => GitHubAppRepositoryAdapter.RemoteIdOf(r.Id)).ToList(),
+            cancellationToken);
 
         return new GitHubRepoListDto
         {
@@ -109,6 +113,7 @@ public class UserGitHubImportService : IUserGitHubImportService
                 CloneUrl = r.CloneUrl,
                 HtmlUrl = r.HtmlUrl,
                 AlreadyImported = existingUrlSet.Contains(r.CloneUrl)
+                                  || registeredRemoteIds.Contains(GitHubAppRepositoryAdapter.RemoteIdOf(r.Id))
             }).ToList()
         };
     }
@@ -143,9 +148,15 @@ public class UserGitHubImportService : IUserGitHubImportService
             .Where(r => requestUrls.Contains(r.GitUrl) && !r.IsDeleted)
             .ToDictionaryAsync(r => r.GitUrl, r => r, StringComparer.OrdinalIgnoreCase, cancellationToken);
 
+        var registeredRemoteIds = await GitHubAppRepositoryAdapter.FindRegisteredRemoteIdsAsync(
+            _context,
+            request.Repos.Select(GitHubAppRepositoryAdapter.RemoteIdOf).OfType<string>().ToList(),
+            cancellationToken);
+
         foreach (var repo in request.Repos)
         {
-            if (existingRepos.ContainsKey(repo.CloneUrl))
+            var remoteId = GitHubAppRepositoryAdapter.RemoteIdOf(repo);
+            if (existingRepos.ContainsKey(repo.CloneUrl) || (remoteId is not null && registeredRemoteIds.Contains(remoteId)))
             {
                 result.Skipped++;
                 result.SkippedRepos.Add(repo.FullName);
@@ -173,6 +184,11 @@ public class UserGitHubImportService : IUserGitHubImportService
                 ForkCount = repo.ForksCount,
                 IsDepartmentOwned = isDeptImport
             };
+
+            if (remoteId is not null)
+            {
+                GitHubAppRepositoryAdapter.AssignIdentity(repoEntity, remoteId, repo.DefaultBranch);
+            }
 
             _context.Repositories.Add(repoEntity);
 

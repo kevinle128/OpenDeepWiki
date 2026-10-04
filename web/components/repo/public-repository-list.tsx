@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { useTranslations } from "@/hooks/use-translations";
@@ -95,19 +95,16 @@ export function PublicRepositoryList({
 
   const total = filteredRepositories.length;
   const totalPages = isTreeView ? 1 : Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const [previousFilters, setPreviousFilters] = useState({ keyword, selectedLanguage, viewMode });
+  if (previousFilters.keyword !== keyword || previousFilters.selectedLanguage !== selectedLanguage || previousFilters.viewMode !== viewMode) {
+    setPreviousFilters({ keyword, selectedLanguage, viewMode });
+    setPage(1);
+  } else if (page > totalPages) {
+    setPage(totalPages);
+  }
   const pagedRepositories = isTreeView
     ? filteredRepositories
     : filteredRepositories.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-
-  useEffect(() => {
-    setPage(1);
-  }, [keyword, selectedLanguage, viewMode]);
-
-  useEffect(() => {
-    if (page > totalPages) {
-      setPage(totalPages);
-    }
-  }, [page, totalPages]);
 
   const handleLanguageChange = (language: string | null) => {
     setSelectedLanguage(language);

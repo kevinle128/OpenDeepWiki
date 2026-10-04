@@ -79,9 +79,19 @@ public class RepositoryItemResponse
     public bool GenerateSkill { get; set; }
 
     /// <summary>
-    /// 是否设置了密码
+    /// True when the repository has a Git connection or a legacy password. Kept for older clients.
     /// </summary>
     public bool HasPassword { get; set; }
+
+    /// <summary>
+    /// True when the repository uses a shared Git connection.
+    /// </summary>
+    public bool HasGitConnection { get; set; }
+
+    /// <summary>
+    /// ID of the shared Git connection, if any. It is not a secret.
+    /// </summary>
+    public string? GitConnectionId { get; set; }
 
     /// <summary>
     /// 创建时间

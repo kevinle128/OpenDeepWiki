@@ -13,6 +13,8 @@ public sealed class BranchGenerationWorker(
     IOptionsMonitor<WikiGeneratorOptions> wikiOptions) : BackgroundService
 {
     private static readonly TimeSpan PollingInterval = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan WorkspaceCleanupInterval = TimeSpan.FromMinutes(5);
+    private DateTime _lastWorkspaceCleanup = DateTime.MinValue;
     private readonly ConcurrentDictionary<string, Task> _inFlight = new();
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -39,12 +41,46 @@ public sealed class BranchGenerationWorker(
                     logger.LogError(ex, "Branch generation polling failed");
                 }
 
+                try
+                {
+                    await CleanupRemovedWorkspacesAsync(stoppingToken);
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Removed branch workspace cleanup failed");
+                }
+
                 await Task.Delay(PollingInterval, stoppingToken);
             }
         }
         finally
         {
             await WaitForInFlightAsync();
+        }
+    }
+
+    /// <summary>
+    /// Retries workspace deletes that failed after a branch was removed. The database removal is already committed,
+    /// so the directory would stay on disk for good without this retry.
+    /// </summary>
+    private async Task CleanupRemovedWorkspacesAsync(CancellationToken stoppingToken)
+    {
+        if (DateTime.UtcNow - _lastWorkspaceCleanup < WorkspaceCleanupInterval)
+        {
+            return;
+        }
+
+        _lastWorkspaceCleanup = DateTime.UtcNow;
+        using var scope = scopeFactory.CreateScope();
+        var removal = scope.ServiceProvider.GetRequiredService<IIndexedBranchRemovalService>();
+        var removed = await removal.CleanupAllRemovedWorkspacesAsync(stoppingToken);
+        if (removed > 0)
+        {
+            logger.LogInformation("Removed {Count} leftover branch workspace directories", removed);
         }
     }
 
@@ -82,7 +118,8 @@ public sealed class BranchGenerationWorker(
                 task.Id,
                 RepositoryGenerationLockScope.Branch,
                 WikiGenerationWorkType.BranchTask,
-                stoppingToken);
+                stoppingToken,
+                task.BranchId);
 
             if (status == WikiGenerationAcquireStatus.ClusterFull)
             {
@@ -95,8 +132,8 @@ public sealed class BranchGenerationWorker(
             if (status != WikiGenerationAcquireStatus.Acquired || lease is null)
             {
                 logger.LogDebug(
-                    "Skipping branch generation task because the repository is busy. TaskId: {TaskId}, RepositoryId: {RepositoryId}",
-                    task.Id, task.RepositoryId);
+                    "Skipping branch generation task because the branch or repository is busy. TaskId: {TaskId}, RepositoryId: {RepositoryId}, BranchId: {BranchId}",
+                    task.Id, task.RepositoryId, task.BranchId);
                 continue;
             }
 

@@ -439,13 +439,11 @@ export default function AdminAiProvidersPage() {
   const [modelForm, setModelForm] = useState<ModelForm>(emptyModelForm);
   const [customProviderForm, setCustomProviderForm] = useState(emptyCustomProviderForm);
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const [providerData, modelData] = await Promise.all([
+  const loadData = useCallback(() => {
+    return Promise.all([
         getAiProviders(),
         getAiModels(),
-      ]);
+      ]).then(([providerData, modelData]) => {
       const sortedProviders = sortProviders(providerData);
       setProviders(sortedProviders);
       setModels(modelData);
@@ -457,36 +455,38 @@ export default function AdminAiProvidersPage() {
           ?? sortedProviders[0]?.id
           ?? null;
       });
-    } catch (error) {
+    }).catch(error => {
       console.error(error);
       toast.error(t("admin.aiProviders.toasts.loadFailed"));
-    } finally {
+    }).finally(() => {
       setLoading(false);
-    }
+    });
   }, [t]);
 
+  const fetchData = useCallback(() => {
+    setLoading(true);
+    return loadData();
+  }, [loadData]);
+
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    void loadData();
+  }, [loadData]);
 
   const selectedProvider = useMemo(
     () => providers.find((provider) => provider.id === selectedProviderId) ?? null,
     [providers, selectedProviderId]
   );
 
-  useEffect(() => {
-    if (!selectedProvider) {
-      setProviderForm(emptyProviderForm);
-      return;
-    }
-
-    setProviderForm(toProviderForm(selectedProvider));
+  const [formProvider, setFormProvider] = useState(selectedProvider);
+  if (formProvider !== selectedProvider) {
+    setFormProvider(selectedProvider);
+    setProviderForm(selectedProvider ? toProviderForm(selectedProvider) : emptyProviderForm);
     setApiKeyTouched(false);
     setShowApiKey(false);
     setModelSearchQuery("");
     setModelDialog(null);
     setModelForm(emptyModelForm);
-  }, [selectedProvider]);
+  }
 
   const filteredProviders = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();

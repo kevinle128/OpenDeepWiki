@@ -45,35 +45,31 @@ export default function OrganizationsPage() {
     [t]
   );
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(() => {
     if (!user) return;
 
-    setLoading(true);
-    try {
-      const [depts, repos] = await Promise.all([
+    return Promise.all([
         getMyDepartments(),
         getMyDepartmentRepositories(),
-      ]);
+      ]).then(([depts, repos]) => {
       setDepartments(depts);
       setRepositories(repos);
-    } catch (error) {
+    }).catch(error => {
       console.error("Failed to fetch organization data:", error);
       toast.error(t("common.organization.fetchFailed"));
-    } finally {
+    }).finally(() => {
       setLoading(false);
-    }
+    });
   }, [t, user]);
 
   useEffect(() => {
     if (user) {
       fetchData();
-    } else if (!authLoading) {
-      setLoading(false);
     }
   }, [user, authLoading, fetchData]);
 
   const content = () => {
-    if (authLoading || loading) {
+    if (authLoading || (user && loading)) {
       return (
         <div className="flex h-[50vh] items-center justify-center">
           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -186,7 +182,7 @@ export default function OrganizationsPage() {
         <div className="mb-6 flex items-center justify-between">
           <h1 className="text-2xl font-bold">{t("common.organization.title")}</h1>
           {user && (
-            <Button variant="outline" onClick={fetchData}>
+            <Button variant="outline" onClick={() => { setLoading(true); void fetchData(); }}>
               <RefreshCw className="mr-2 h-4 w-4" />
               {t("common.organization.refresh")}
             </Button>

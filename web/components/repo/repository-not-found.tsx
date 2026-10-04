@@ -1,14 +1,14 @@
 ﻿"use client";
 
 import { useState } from "react";
+import Image from "next/image";
 import { useRouter, usePathname } from "next/navigation";
-import { useLocale } from "next-intl";
 import { GitBranch, Star, GitFork, Code, Plus, Loader2, ExternalLink, Home } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { submitRepository } from "@/lib/repository-api";
 import { useAuth } from "@/contexts/auth-context";
 import { useTranslations } from "@/hooks/use-translations";
-import { resolveWikiLanguageFromUiLocale } from "@/i18n/config";
+import { defaultWikiLanguage } from "@/i18n/config";
 import type { GitRepoCheckResponse } from "@/types/repository";
 
 interface RepositoryNotFoundProps {
@@ -20,7 +20,6 @@ interface RepositoryNotFoundProps {
 export function RepositoryNotFound({ owner, repo, gitHubInfo }: RepositoryNotFoundProps) {
   const router = useRouter();
   const pathname = usePathname();
-  const locale = useLocale();
   const t = useTranslations();
   const { isAuthenticated } = useAuth();
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -46,7 +45,7 @@ export function RepositoryNotFound({ owner, repo, gitHubInfo }: RepositoryNotFou
         repoName: repo,
         orgName: owner,
         branchName: gitHubInfo.defaultBranch,
-        languageCode: resolveWikiLanguageFromUiLocale(locale),
+        languageCode: defaultWikiLanguage,
         isPublic: true,
         generateSkill: true,
       });
@@ -92,9 +91,12 @@ export function RepositoryNotFound({ owner, repo, gitHubInfo }: RepositoryNotFou
           {/* 仓库头部 */}
           <div className="flex items-start gap-4 mb-6">
             {gitHubInfo.avatarUrl && (
-              <img
+              <Image
                 src={gitHubInfo.avatarUrl}
                 alt={owner}
+                width={64}
+                height={64}
+                unoptimized
                 className="w-16 h-16 rounded-lg"
               />
             )}

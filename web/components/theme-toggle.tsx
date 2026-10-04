@@ -15,12 +15,7 @@ import {
 export function ThemeToggle() {
   const t = useTranslations("common");
   const { theme, setTheme } = useTheme();
-  const [mounted, setMounted] = React.useState(false);
-
-  // 避免水合不匹配
-  React.useEffect(() => {
-    setMounted(true);
-  }, []);
+  const mounted = React.useSyncExternalStore(subscribe, () => true, () => false);
 
   if (!mounted) {
     return (
@@ -61,3 +56,5 @@ export function ThemeToggle() {
     </DropdownMenu>
   );
 }
+
+const subscribe = () => () => {};

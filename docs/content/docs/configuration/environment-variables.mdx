@@ -32,7 +32,7 @@ Host=<host>;Port=5432;Database=opendeepwiki;Username=<user>;Password=<password>
 
 | 变量 | 必需 | 默认值 | 描述 |
 |---|---|---|---|
-| `JWT_SECRET_KEY` | 是（生产环境） | 内置开发密钥 | 用于 JWT 令牌的 HMAC-SHA256 签名密钥。生产环境必须更改 |
+| `JWT_SECRET_KEY` | 是（生产环境） | 内置开发密钥 | 用于 JWT 令牌的 HMAC-SHA256 签名密钥。生产环境必须更改，且长度至少 32 个 UTF-8 字节、不得为内置默认值，否则应用将拒绝启动 |
 
 <Callout type="warn">
   默认 JWT 密钥仅用于开发。在生产环境中始终设置强大、唯一的 `JWT_SECRET_KEY`。
@@ -49,6 +49,32 @@ JWT 发行者、受众和过期时间通过 `appsettings.json` 的 `Jwt` 部分�
   }
 }
 ```
+
+## Git connection secrets and provider access
+
+A shared Git connection stores one provider token. The application encrypts the token with ASP.NET Core Data Protection
+before it writes it to the database. The keys that encrypt it are kept in a key ring directory, outside the database.
+See [Shared Git connections](/docs/deployment/docker-compose#git-connection-secrets) for backup and restore.
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `DataProtection__KeyRingPath` | Yes (Production) | — | Directory of the Data Protection key ring (configuration key `DataProtection:KeyRingPath`). In Production the application refuses to start without it and exits with code 1. The directory must be persistent and must be backed up with the database. If the key ring is lost, every saved Git connection token becomes unreadable and must be replaced. The key files are plain XML protected by file permissions only. No certificate or key-management service option is implemented |
+| `GitProviders__AllowedPrivateHosts__0` | No | empty | Exact host name of a self-hosted GitLab server that may resolve to a private or loopback address. Add more entries with `__1`, `__2`, and so on. Configuration key `GitProviders:AllowedPrivateHosts` |
+| `GitProviders__AllowedPrivateCidrs__0` | No | empty | CIDR range, for example `10.20.0.0/16`, in which a self-hosted GitLab server address may fall. A range that cannot be parsed stops the application at startup. Configuration key `GitProviders:AllowedPrivateCidrs` |
+| `GitProviders__RequestTimeoutSeconds` | No | `15` | Time limit of one provider request, from 1 to 120 seconds. A value outside this range stops the application at startup |
+
+Rules of the address policy for self-hosted GitLab:
+
+- The server URL must be an HTTPS origin: no user information, path, query, or fragment.
+- A server on a public address works without any allowlist entry.
+- A server on a private or loopback address works only when its exact host name or its address range is in the allowlist.
+- Link-local, cloud metadata, unspecified, multicast, and reserved addresses are always blocked, even when they are in the allowlist.
+- If a host name resolves to more than one address, one blocked address rejects the request.
+
+<Callout type="info">
+  Earlier versions ignored `JWT_SECRET_KEY` and signed tokens with the built-in key. This version uses `JWT_SECRET_KEY`.
+  On the first start after the upgrade, every existing session becomes invalid and each user signs in again once.
+</Callout>
 
 ## AI 服务（聊天）
 
@@ -101,7 +127,7 @@ JWT 发行者、受众和过期时间通过 `appsettings.json` 的 `Jwt` 部分�
 |---|---|---|---|
 | `WIKI_PARALLEL_COUNT` | 否 | `5` | 并行文档生成任务数。更高的值加快生成但使用更多资源 |
 | `WIKI_MAX_CONCURRENT_GENERATIONS` | 否 | `1` | 整个集群同时进行仓库 Wiki 生成的上限。多实例共享这个配额 |
-| `WIKI_LANGUAGES` | 否 | `en,zh,zh-tw,ja,ko,es,fr,de,pt-br,pl,ru,ar` | 多语言 wiki 生成的目标语言逗号分隔列表 |
+| `WIKI_LANGUAGES` | 否 | `en,vi` | 多语言 wiki 生成的目标语言逗号分隔列表 |
 | `REPOSITORIES_DIRECTORY` | 否 | `/data` | 用于存储克隆仓库文件的目录 |
 | `WIKI_MAX_OUTPUT_TOKENS` | 否 | `32000` | 单次 AI 生成的最大输出 Token 数，防止回复过长 |
 | `WIKI_DOCUMENT_GENERATION_TIMEOUT_MINUTES` | 否 | `60` | 单篇文档生成任务的超时时间（分钟） |
@@ -112,6 +138,12 @@ JWT 发行者、受众和过期时间通过 `appsettings.json` 的 `Jwt` 部分�
 | `WIKI_MAX_RETRY_ATTEMPTS` | 否 | `3` | 调用 AI 接口失败时的最大重试次数 |
 | `WIKI_RETRY_DELAY_MS` | 否 | `1000` | AI 调用重试之间的等待时间（毫秒） |
 | `WIKI_PROMPTS_DIRECTORY` | 否 | `prompts` | 自定义 wiki 生成提示模板所在目录 |
+
+<Callout type="info">
+  Saved Wiki runtime settings take priority over environment defaults; see `src/OpenDeepWiki/Program.cs` (`SystemSettingDefaults.ApplyToWikiGeneratorOptions`).
+  Use **Admin Settings → AI** to change `WIKI_MAX_CONCURRENT_GENERATIONS` on a running worker.
+  The live update route is `AdminUpdateSettings` in `src/OpenDeepWiki/Endpoints/Admin/AdminSettingsEndpoints.cs`.
+</Callout>
 
 ## 增量更新
 
@@ -182,7 +214,7 @@ DB_TYPE=sqlite
 CONNECTION_STRING=Data Source=/data/opendeepwiki.db
 
 # JWT（生产环境需更改！）
-JWT_SECRET_KEY=your-strong-secret-key-here
+JWT_SECRET_KEY=replace-with-a-random-string-of-at-least-32-bytes
 
 # AI 服务
 CHAT_API_KEY=sk-your-api-key
@@ -197,7 +229,7 @@ WIKI_CONTENT_ENDPOINT=https://api.openai.com/v1
 WIKI_CONTENT_API_KEY=sk-your-api-key
 
 # 多语言
-WIKI_LANGUAGES=en,zh,zh-tw,ja,ko,es,fr,de,pt-br,pl,ru,ar
+WIKI_LANGUAGES=en,vi
 ```
 
 <Callout type="info">

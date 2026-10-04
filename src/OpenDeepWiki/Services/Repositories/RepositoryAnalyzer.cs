@@ -4,7 +4,9 @@ using System.Security.Cryptography;
 using LibGit2Sharp;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using LibGit2Sharp.Handlers;
 using OpenDeepWiki.Entities;
+using OpenDeepWiki.Services.GitConnections;
 using GitRepository = LibGit2Sharp.Repository;
 
 namespace OpenDeepWiki.Services.Repositories;
@@ -55,13 +57,21 @@ public class RepositoryAnalyzer : IRepositoryAnalyzer
 {
     private readonly RepositoryAnalyzerOptions _options;
     private readonly ILogger<RepositoryAnalyzer> _logger;
+    private readonly IGitCredentialResolver _credentialResolver;
+    private readonly GitRemoteOriginGuard _originGuard;
 
     public RepositoryAnalyzer(
         IOptions<RepositoryAnalyzerOptions> options,
-        ILogger<RepositoryAnalyzer> logger)
+        ILogger<RepositoryAnalyzer> logger,
+        IGitCredentialResolver credentialResolver,
+        GitLabServerUrlValidator? remoteValidator = null)
     {
         _options = options.Value;
         _logger = logger;
+        _credentialResolver = credentialResolver;
+        // Without operator settings only public addresses pass, which is the safe default.
+        _originGuard = new GitRemoteOriginGuard(remoteValidator
+            ?? new GitLabServerUrlValidator(Microsoft.Extensions.Options.Options.Create(new GitProviderOptions()), new SystemGitHostResolver()));
 
         _logger.LogDebug(
             "RepositoryAnalyzer initialized. RepositoriesDirectory: {RepoDir}, CleanupAfterProcessing: {Cleanup}, MaxRetryAttempts: {MaxRetry}",
@@ -130,7 +140,7 @@ public class RepositoryAnalyzer : IRepositoryAnalyzer
             return null;
         }
 
-        var credentials = BuildCredentials(repository);
+        var credentialsHandler = await ResolveCredentialsHandlerAsync(repository, sourceInfo.Location, cancellationToken);
         var branchRefName = $"refs/heads/{branchName}";
 
         _logger.LogDebug(
@@ -141,9 +151,9 @@ public class RepositoryAnalyzer : IRepositoryAnalyzer
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var references = credentials == null
+            var references = credentialsHandler == null
                 ? GitRepository.ListRemoteReferences(sourceInfo.Location)
-                : GitRepository.ListRemoteReferences(sourceInfo.Location, (_, _, _) => credentials);
+                : GitRepository.ListRemoteReferences(sourceInfo.Location, credentialsHandler);
 
             var branchReference = references.FirstOrDefault(reference =>
                 string.Equals(reference.CanonicalName, branchRefName, StringComparison.Ordinal));
@@ -191,24 +201,33 @@ public class RepositoryAnalyzer : IRepositoryAnalyzer
 
         if (workspace.SourceType == RepositorySourceType.Git)
         {
-            // Build credentials if provided
-            var credentials = BuildCredentials(repository);
-            var hasCredentials = credentials != null;
-            _logger.LogDebug("Credentials configured: {HasCredentials}", hasCredentials);
+            // Build credentials if provided. A connection credential is read only after the remote passed the
+            // origin and address checks.
+            var credentialsHandler = await ResolveCredentialsHandlerAsync(repository, workspace.GitUrl, cancellationToken);
+            _logger.LogDebug("Credentials configured: {HasCredentials}", credentialsHandler != null);
 
             // Clone or pull the repository
             var repoExists = Directory.Exists(workspace.WorkingDirectory) &&
                              Directory.Exists(Path.Combine(workspace.WorkingDirectory, ".git"));
 
+            if (repoExists && IsConnectionBound(repository) && !OriginMatchesRepository(workspace))
+            {
+                // A checkout of another remote must not be fetched with this connection's credential.
+                _logger.LogWarning(
+                    "Workspace origin differs from the repository remote; cloning again. Repository: {Org}/{Repo}",
+                    workspace.Organization, workspace.RepositoryName);
+                repoExists = false;
+            }
+
             if (repoExists)
             {
                 _logger.LogDebug("Repository exists locally, pulling latest changes");
-                await PullRepositoryAsync(workspace, credentials, cancellationToken);
+                await PullRepositoryAsync(workspace, credentialsHandler, cancellationToken);
             }
             else
             {
                 _logger.LogDebug("Repository does not exist locally, cloning");
-                await CloneRepositoryAsync(workspace, credentials, cancellationToken);
+                await CloneRepositoryAsync(workspace, credentialsHandler, cancellationToken);
             }
 
             // Get the current HEAD commit ID
@@ -345,6 +364,21 @@ public class RepositoryAnalyzer : IRepositoryAnalyzer
         return Task.FromResult(changedFiles);
     }
 
+    /// <inheritdoc />
+    public Task<string[]> GetDeletedFilesAsync(
+        RepositoryWorkspace workspace,
+        string? fromCommitId,
+        string toCommitId,
+        CancellationToken cancellationToken = default)
+    {
+        if (!workspace.SupportsIncrementalUpdates || string.IsNullOrEmpty(fromCommitId))
+        {
+            return Task.FromResult(Array.Empty<string>());
+        }
+
+        return Task.FromResult(GetDisappearedFilesBetweenCommits(workspace.WorkingDirectory, fromCommitId, toCommitId));
+    }
+
     /// <summary>
     /// Gets the working directory path for a repository.
     /// Format: {RepositoriesDirectory}/{organization}/{name}/branches/{branch}/tree/
@@ -469,7 +503,7 @@ public class RepositoryAnalyzer : IRepositoryAnalyzer
         {
             if (IsValidWorkspaceForSource(workspace.WorkingDirectory, localGitSource.RepositoryPath, out var workspaceReason))
             {
-                await PullRepositoryAsync(workspace, credentials: null, cancellationToken);
+                await PullRepositoryAsync(workspace, credentialsHandler: null, cancellationToken);
             }
             else
             {
@@ -478,7 +512,7 @@ public class RepositoryAnalyzer : IRepositoryAnalyzer
                     localGitSource.RepositoryPath, workspace.BranchName, workspace.WorkingDirectory, workspaceReason);
 
                 DeleteWorkspaceDirectoryWithinRepositoryRoot(workspace.WorkingDirectory, localGitSource.RepositoryPath);
-                await CloneRepositoryAsync(workspace, credentials: null, cancellationToken);
+                await CloneRepositoryAsync(workspace, credentialsHandler: null, cancellationToken);
             }
 
             workspace.LocalDirectoryImportModeUsed = LocalDirectoryImportMode.Copy;
@@ -1244,15 +1278,15 @@ public class RepositoryAnalyzer : IRepositoryAnalyzer
             return;
         }
 
-        var normalizedWorkspace = NormalizeLocalPath(workspacePath);
-        var normalizedSource = NormalizeLocalPath(sourcePath);
+        var normalizedWorkspace = ResolvePhysicalLocalPath(workspacePath);
+        var normalizedSource = ResolvePhysicalLocalPath(sourcePath);
         if (PathsEqual(normalizedWorkspace, normalizedSource))
         {
             throw new InvalidOperationException(
                 $"Refusing to delete local git source while preparing workspace: {workspacePath}");
         }
 
-        var normalizedRoot = NormalizeLocalPath(_options.RepositoriesDirectory);
+        var normalizedRoot = ResolvePhysicalLocalPath(_options.RepositoriesDirectory);
         if (PathsEqual(normalizedWorkspace, normalizedRoot) ||
             !IsPathUnder(normalizedWorkspace, normalizedRoot))
         {
@@ -1265,7 +1299,29 @@ public class RepositoryAnalyzer : IRepositoryAnalyzer
 
     private static bool LocalPathEquals(string pathA, string pathB)
     {
-        return PathsEqual(NormalizeLocalPath(pathA), NormalizeLocalPath(pathB));
+        return PathsEqual(ResolvePhysicalLocalPath(pathA), ResolvePhysicalLocalPath(pathB));
+    }
+
+    private static string ResolvePhysicalLocalPath(string path)
+    {
+        var fullPath = NormalizeLocalPath(path);
+        var root = Path.GetPathRoot(fullPath)!;
+        var resolved = root;
+        foreach (var component in fullPath[root.Length..].Split(
+                     [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+                     StringSplitOptions.RemoveEmptyEntries))
+        {
+            resolved = Path.Combine(resolved, component);
+            var target = Directory.Exists(resolved)
+                ? new DirectoryInfo(resolved).ResolveLinkTarget(returnFinalTarget: true)
+                : null;
+            if (target != null)
+            {
+                resolved = ResolvePhysicalLocalPath(target.FullName);
+            }
+        }
+
+        return Path.TrimEndingDirectorySeparator(resolved);
     }
 
     private static bool PathsEqual(string normalizedPathA, string normalizedPathB)
@@ -1289,8 +1345,7 @@ public class RepositoryAnalyzer : IRepositoryAnalyzer
             path = uri.LocalPath;
         }
 
-        return Path.GetFullPath(path)
-            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        return Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
     }
 
     private static StringComparison GetPathComparison()
@@ -1414,30 +1469,96 @@ public class RepositoryAnalyzer : IRepositoryAnalyzer
     }
 
     /// <summary>
-    /// Builds LibGit2Sharp credentials from repository authentication info.
+    /// Resolves the credential for a Git operation. A repository that uses a connection first passes the origin
+    /// and address checks, and its credential is only handed to the connection's own origin.
     /// </summary>
-    private static Credentials? BuildCredentials(Entities.Repository repository)
+    private async Task<CredentialsHandler?> ResolveCredentialsHandlerAsync(
+        Entities.Repository repository,
+        string remoteUrl,
+        CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(repository.AuthAccount) && 
-            string.IsNullOrWhiteSpace(repository.AuthPassword))
+        await _originGuard.EnsureAllowedAsync(repository, remoteUrl, cancellationToken);
+
+        var credential = await _credentialResolver.ResolveAsync(repository, cancellationToken);
+        if (credential == null)
         {
             return null;
         }
 
-        return new UsernamePasswordCredentials
+        var credentials = new UsernamePasswordCredentials
         {
-            Username = repository.AuthAccount ?? string.Empty,
-            Password = repository.AuthPassword ?? string.Empty
+            Username = credential.Username,
+            Password = credential.Password
         };
+
+        return IsConnectionBound(repository)
+            ? CreateOriginBoundCredentialsHandler(credentials, repository.ProviderBaseUrl!)
+            : (_, _, _) => credentials;
     }
 
+    private static bool IsConnectionBound(Entities.Repository repository)
+        => !string.IsNullOrWhiteSpace(repository.GitConnectionId);
+
+    /// <summary>
+    /// libgit2 asks for credentials with the URL that challenged it, which is the redirect target after a redirect.
+    /// The handler gives the credential to the expected origin only and fails everywhere else.
+    /// </summary>
+    internal static CredentialsHandler CreateOriginBoundCredentialsHandler(Credentials credentials, string expectedOrigin)
+    {
+        return (url, _, _) => GitRemoteOriginGuard.IsSameOrigin(url, expectedOrigin)
+            ? credentials
+            : throw new GitRemoteOriginException(GitRemoteOriginException.OriginMismatch);
+    }
+
+    private bool OriginMatchesRepository(RepositoryWorkspace workspace)
+    {
+        try
+        {
+            using var repo = new GitRepository(workspace.WorkingDirectory);
+            return GitRemoteOriginGuard.IsSameRemote(repo.Network.Remotes["origin"]?.Url, workspace.GitUrl);
+        }
+        catch (LibGit2SharpException)
+        {
+            return false;
+        }
+    }
+
+    internal static CloneOptions CreateCloneOptions(string branchName, CredentialsHandler? credentialsHandler)
+    {
+        var cloneOptions = new CloneOptions
+        {
+            BranchName = branchName,
+            RecurseSubmodules = false
+        };
+
+        // No CertificateCheck callback: libgit2 then validates the server certificate and refuses an untrusted one.
+        if (credentialsHandler != null)
+        {
+            cloneOptions.FetchOptions.CredentialsProvider = credentialsHandler;
+        }
+
+        return cloneOptions;
+    }
+
+    internal static FetchOptions CreateFetchOptions(CredentialsHandler? credentialsHandler)
+    {
+        // No CertificateCheck callback: libgit2 then validates the server certificate and refuses an untrusted one.
+        var fetchOptions = new FetchOptions();
+
+        if (credentialsHandler != null)
+        {
+            fetchOptions.CredentialsProvider = credentialsHandler;
+        }
+
+        return fetchOptions;
+    }
 
     /// <summary>
     /// Clones a repository to the working directory.
     /// </summary>
     private async Task CloneRepositoryAsync(
         RepositoryWorkspace workspace,
-        Credentials? credentials,
+        CredentialsHandler? credentialsHandler,
         CancellationToken cancellationToken)
     {
         var stopwatch = Stopwatch.StartNew();
@@ -1452,19 +1573,7 @@ public class RepositoryAnalyzer : IRepositoryAnalyzer
             DeleteDirectoryRecursive(workspace.WorkingDirectory);
         }
 
-        var cloneOptions = new CloneOptions
-        {
-            BranchName = workspace.BranchName,
-            RecurseSubmodules = false
-        };
-
-        // 跳过 SSL 证书验证（解决 TLS 解密错误）
-        cloneOptions.FetchOptions.CertificateCheck = (_, _, _) => true;
-
-        if (credentials != null)
-        {
-            cloneOptions.FetchOptions.CredentialsProvider = (_, _, _) => credentials;
-        }
+        var cloneOptions = CreateCloneOptions(workspace.BranchName, credentialsHandler);
 
         var retryCount = 0;
         Exception? lastException = null;
@@ -1530,7 +1639,7 @@ public class RepositoryAnalyzer : IRepositoryAnalyzer
     /// </summary>
     private async Task PullRepositoryAsync(
         RepositoryWorkspace workspace,
-        Credentials? credentials,
+        CredentialsHandler? credentialsHandler,
         CancellationToken cancellationToken)
     {
         var stopwatch = Stopwatch.StartNew();
@@ -1559,14 +1668,7 @@ public class RepositoryAnalyzer : IRepositoryAnalyzer
                     var remote = repo.Network.Remotes["origin"];
                     var refSpecs = remote.FetchRefSpecs.Select(x => x.Specification);
 
-                    var fetchOptions = new FetchOptions();
-                    // 跳过 SSL 证书验证（解决 TLS 解密错误）
-                    fetchOptions.CertificateCheck = (_, _, _) => true;
-                    
-                    if (credentials != null)
-                    {
-                        fetchOptions.CredentialsProvider = (_, _, _) => credentials;
-                    }
+                    var fetchOptions = CreateFetchOptions(credentialsHandler);
 
                     _logger.LogDebug("Fetching from remote 'origin'");
                     Commands.Fetch(repo, remote.Name, refSpecs, fetchOptions, null);
@@ -1739,6 +1841,42 @@ public class RepositoryAnalyzer : IRepositoryAnalyzer
         }
 
         return changedFiles.ToArray();
+    }
+
+    /// <summary>
+    /// Gets paths that exist at the first commit and are gone at the second: deleted files and the old path of renames.
+    /// </summary>
+    private static string[] GetDisappearedFilesBetweenCommits(
+        string workingDirectory,
+        string fromCommitId,
+        string toCommitId)
+    {
+        using var repo = new GitRepository(workingDirectory);
+
+        var fromCommit = repo.Lookup<Commit>(fromCommitId);
+        var toCommit = repo.Lookup<Commit>(toCommitId);
+        if (fromCommit == null || toCommit == null)
+        {
+            // An unreachable baseline already makes the changed-file list cover every tracked file.
+            return [];
+        }
+
+        var changes = repo.Diff.Compare<TreeChanges>(fromCommit.Tree, toCommit.Tree);
+        var disappeared = new List<string>();
+        foreach (var change in changes)
+        {
+            switch (change.Status)
+            {
+                case ChangeKind.Deleted:
+                    disappeared.Add(change.Path);
+                    break;
+                case ChangeKind.Renamed:
+                    disappeared.Add(change.OldPath);
+                    break;
+            }
+        }
+
+        return disappeared.ToArray();
     }
 
     /// <inheritdoc />

@@ -221,10 +221,8 @@ export default function AdminDepartmentsPage() {
 
   const pageSize = 10;
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const result = await getDepartmentTree();
+  const loadData = useCallback(() => {
+    return getDepartmentTree().then((result) => {
       setDepartmentTree(result);
       // 默认展开所有
       const allIds = new Set<string>();
@@ -236,17 +234,22 @@ export default function AdminDepartmentsPage() {
       };
       collectIds(result);
       setExpandedIds(allIds);
-    } catch (error) {
+    }).catch(error => {
       console.error("Failed to fetch departments:", error);
       toast.error(t('admin.toast.fetchDeptFailed'));
-    } finally {
+    }).finally(() => {
       setLoading(false);
-    }
-  }, []);
+    });
+  }, [t]);
+
+  const fetchData = useCallback(() => {
+    setLoading(true);
+    return loadData();
+  }, [loadData]);
 
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    void loadData();
+  }, [loadData]);
 
   const fetchDeptDetail = async (dept: AdminDepartment) => {
     setSelectedDept(dept);
@@ -258,7 +261,7 @@ export default function AdminDepartmentsPage() {
       ]);
       setDeptUsers(users);
       setDeptRepos(repos);
-    } catch (error) {
+    } catch {
       toast.error(t('admin.toast.fetchDeptDetailFailed'));
     } finally {
       setDetailLoading(false);
@@ -344,12 +347,12 @@ export default function AdminDepartmentsPage() {
       const result = await getUsers(page, pageSize, keyword);
       setUserSearchResults(result.items.map(u => ({ id: u.id, name: u.name, email: u.email })));
       setUserTotal(result.total);
-    } catch (error) {
+    } catch {
       toast.error(t('admin.toast.searchUserFailed'));
     } finally {
       setUserLoading(false);
     }
-  }, []);
+  }, [t]);
 
   const openAddUserDialog = () => {
     setUserSearchKeyword("");
@@ -389,7 +392,7 @@ export default function AdminDepartmentsPage() {
       await removeUserFromDepartment(selectedDept.id, userId);
       toast.success(t('admin.toast.removeSuccess'));
       fetchDeptDetail(selectedDept);
-    } catch (error) {
+    } catch {
       toast.error(t('admin.toast.removeFailed'));
     }
   };
@@ -401,12 +404,12 @@ export default function AdminDepartmentsPage() {
       const result = await getRepositories(page, pageSize, keyword);
       setRepoSearchResults(result.items.map(r => ({ id: r.id, name: r.repoName, orgName: r.orgName })));
       setRepoTotal(result.total);
-    } catch (error) {
+    } catch {
       toast.error(t('admin.toast.searchRepoFailed'));
     } finally {
       setRepoLoading(false);
     }
-  }, []);
+  }, [t]);
 
   const openAddRepoDialog = () => {
     setRepoSearchKeyword("");
@@ -446,7 +449,7 @@ export default function AdminDepartmentsPage() {
       await removeRepositoryFromDepartment(selectedDept.id, repositoryId);
       toast.success(t('admin.toast.removeSuccess'));
       fetchDeptDetail(selectedDept);
-    } catch (error) {
+    } catch {
       toast.error(t('admin.toast.removeFailed'));
     }
   };

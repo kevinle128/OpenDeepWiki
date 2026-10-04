@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Bookmark, Loader2 } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
@@ -14,9 +15,15 @@ interface BookmarkButtonProps {
 
 export function BookmarkButton({ repositoryId, bookmarkCount = 0, onCountChange }: BookmarkButtonProps) {
   const { user, isAuthenticated } = useAuth();
+  const router = useRouter();
   const [isBookmarked, setIsBookmarked] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [count, setCount] = useState(bookmarkCount);
+  const [previousCount, setPreviousCount] = useState(bookmarkCount);
+  if (previousCount !== bookmarkCount) {
+    setPreviousCount(bookmarkCount);
+    setCount(bookmarkCount);
+  }
 
   useEffect(() => {
     if (isAuthenticated && user?.id) {
@@ -26,14 +33,10 @@ export function BookmarkButton({ repositoryId, bookmarkCount = 0, onCountChange 
     }
   }, [repositoryId, user?.id, isAuthenticated]);
 
-  useEffect(() => {
-    setCount(bookmarkCount);
-  }, [bookmarkCount]);
-
   const handleClick = async () => {
     if (!isAuthenticated || !user?.id) {
       // Redirect to login or show login prompt
-      window.location.href = "/auth";
+      router.push("/auth");
       return;
     }
 

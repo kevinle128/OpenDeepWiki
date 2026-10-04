@@ -53,6 +53,9 @@ public interface IContext : IDisposable
     DbSet<McpUsageLog> McpUsageLogs { get; set; }
     DbSet<McpDailyStatistics> McpDailyStatistics { get; set; }
     DbSet<ApiKey> ApiKeys { get; set; }
+    DbSet<GitConnection> GitConnections { get; set; }
+    DbSet<GitConnectionAuditEvent> GitConnectionAuditEvents { get; set; }
+    DbSet<GitCredentialMigrationRecord> GitCredentialMigrationRecords { get; set; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }
@@ -111,6 +114,9 @@ public abstract class MasterDbContext : DbContext, IContext
     public DbSet<McpUsageLog> McpUsageLogs { get; set; } = null!;
     public DbSet<McpDailyStatistics> McpDailyStatistics { get; set; } = null!;
     public DbSet<ApiKey> ApiKeys { get; set; } = null!;
+    public DbSet<GitConnection> GitConnections { get; set; } = null!;
+    public DbSet<GitConnectionAuditEvent> GitConnectionAuditEvents { get; set; } = null!;
+    public DbSet<GitCredentialMigrationRecord> GitCredentialMigrationRecords { get; set; } = null!;
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -124,6 +130,16 @@ public abstract class MasterDbContext : DbContext, IContext
         modelBuilder.Entity<Repository>()
             .HasIndex(repository => new { repository.OrgName, repository.RepoName })
             .IsUnique();
+
+        // Stable remote identity. NULL identity columns (legacy, ZIP, and local rows) never collide, and a
+        // deleted row does not block a new registration of the same remote. The unique (OrgName, RepoName)
+        // index above stays: it keeps route and workspace paths unique, so the connect service derives a
+        // distinct organization slug when two remotes share a path.
+        modelBuilder.Entity<Repository>()
+            .HasIndex(repository => new { repository.Provider, repository.ProviderBaseUrl, repository.ProviderRepositoryId })
+            .IsUnique()
+            .HasAnnotation("Relational:Name", "IX_Repositories_RemoteIdentity")
+            .HasAnnotation("Relational:Filter", "\"ProviderRepositoryId\" IS NOT NULL AND NOT \"IsDeleted\"");
 
         modelBuilder.Entity<Repository>()
             .Property(repository => repository.GenerateSkill)
@@ -357,9 +373,26 @@ public abstract class MasterDbContext : DbContext, IContext
             .IsUnique()
             .HasAnnotation("Relational:Filter", "\"Status\" IN (0, 1)");
 
+        // One repository-scope lock per repository and one branch-scope lock per branch. The two filtered
+        // indexes cannot express that a repository lock excludes every branch lock, so the lock service
+        // checks that rule inside a transaction that first takes a write lock on the repository row.
         modelBuilder.Entity<RepositoryGenerationLock>()
             .HasIndex(l => l.RepositoryId)
-            .IsUnique();
+            .IsUnique()
+            .HasAnnotation("Relational:Name", "IX_RepositoryGenerationLocks_RepositoryScope")
+            .HasAnnotation("Relational:Filter", "\"BranchId\" IS NULL");
+
+        modelBuilder.Entity<RepositoryGenerationLock>()
+            .HasIndex(l => new { l.RepositoryId, l.BranchId })
+            .IsUnique()
+            .HasAnnotation("Relational:Name", "IX_RepositoryGenerationLocks_RepositoryId_BranchId")
+            .HasAnnotation("Relational:Filter", "\"BranchId\" IS NOT NULL");
+
+        modelBuilder.Entity<RepositoryGenerationLock>()
+            .HasOne(l => l.Branch)
+            .WithMany()
+            .HasForeignKey(l => l.BranchId)
+            .OnDelete(DeleteBehavior.Cascade);
 
         modelBuilder.Entity<WikiGenerationSlot>()
             .HasIndex(slot => slot.SlotIndex)
@@ -491,5 +524,77 @@ public abstract class MasterDbContext : DbContext, IContext
             entity.HasIndex(e => e.KeyPrefix).IsUnique();
             entity.HasIndex(e => e.UserId);
         });
+
+        // GitConnection identity is unique across all rows, including soft-deleted ones,
+        // so a deleted connection is restored instead of duplicated.
+        modelBuilder.Entity<GitConnection>(entity =>
+        {
+            entity.HasIndex(e => new { e.Provider, e.NormalizedServerUrl, e.ExternalAccountId })
+                .IsUnique()
+                // The default name is longer than the PostgreSQL identifier limit of 63 bytes.
+                .HasAnnotation("Relational:Name", "IX_GitConnections_Identity");
+
+            // The defaults let the upgrade DDL add both columns to rows that already exist.
+            // The relational package is not referenced here, so the annotation is set by name.
+            entity.Property(e => e.DisplayName).HasAnnotation("Relational:DefaultValue", string.Empty);
+            entity.Property(e => e.ConcurrencyStamp).HasAnnotation("Relational:DefaultValue", string.Empty);
+
+            entity.HasOne(e => e.CreatedBy)
+                .WithMany()
+                .HasForeignKey(e => e.CreatedByUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // A repository never owns its connection: deleting a connection that is still referenced must fail.
+        modelBuilder.Entity<Repository>()
+            .HasOne(repository => repository.GitConnection)
+            .WithMany()
+            .HasForeignKey(repository => repository.GitConnectionId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        modelBuilder.Entity<GitConnectionAuditEvent>(entity =>
+        {
+            entity.HasOne(e => e.GitConnection)
+                .WithMany()
+                .HasForeignKey(e => e.GitConnectionId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasIndex(e => new { e.GitConnectionId, e.CreatedAt });
+            entity.HasIndex(e => new { e.ActorUserId, e.CreatedAt });
+        });
+
+        // One progress row per repository. Progress has no meaning without the repository, so it follows it.
+        modelBuilder.Entity<GitCredentialMigrationRecord>(entity =>
+        {
+            entity.HasIndex(e => e.RepositoryId).IsUnique();
+            entity.HasOne(e => e.Repository)
+                .WithMany()
+                .HasForeignKey(e => e.RepositoryId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+    }
+
+    public override int SaveChanges(bool acceptAllChangesOnSuccess)
+    {
+        EnsureAuditEventsAreAppendOnly();
+        return base.SaveChanges(acceptAllChangesOnSuccess);
+    }
+
+    public override Task<int> SaveChangesAsync(
+        bool acceptAllChangesOnSuccess,
+        CancellationToken cancellationToken = default)
+    {
+        EnsureAuditEventsAreAppendOnly();
+        return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+    }
+
+    private void EnsureAuditEventsAreAppendOnly()
+    {
+        var rewritten = ChangeTracker.Entries<GitConnectionAuditEvent>()
+            .Any(entry => entry.State is EntityState.Modified or EntityState.Deleted);
+        if (rewritten)
+        {
+            throw new InvalidOperationException("Git connection audit events are append-only.");
+        }
     }
 }

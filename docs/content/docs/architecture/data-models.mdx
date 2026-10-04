@@ -20,6 +20,8 @@ description: OpenDeepWiki 中的核心实体定义和关系。
 
 ```mermaid
 erDiagram
+    GitConnection ||--o{ Repository : "used by"
+    GitConnection ||--o{ GitConnectionAuditEvent : records
     Repository ||--o{ RepositoryBranch : has
     RepositoryBranch ||--o{ BranchLanguage : has
     BranchLanguage ||--o{ DocCatalog : contains
@@ -32,6 +34,7 @@ erDiagram
     Repository ||--o{ GraphifyArtifact : produces
     Repository ||--o{ RepositoryGenerationLock : locks
     User ||--o{ Repository : owns
+    User ||--o{ GitConnection : creates
     User ||--o{ UserBookmark : has
     User ||--o{ UserSubscription : has
 ```
@@ -48,8 +51,13 @@ erDiagram
 | `GitUrl` | `string` | Git 克隆 URL（ZIP/本地目录导入时可为空） |
 | `RepoName` | `string` | 仓库名称 |
 | `OrgName` | `string` | 组织或所有者名称 |
-| `AuthAccount` | `string?` | Git 认证用户名（用于私有仓库） |
-| `AuthPassword` | `string?` | Git 认证密码/令牌 |
+| `AuthAccount` | `string?` | 旧的 Git 认证用户名（只读兼容字段，见下文） |
+| `AuthPassword` | `string?` | 旧的 Git 认证密码/令牌（只读兼容字段，见下文） |
+| `GitConnectionId` | `string?` | 使用的共享 Git 连接。设置后，所有克隆和拉取都只用该连接的令牌 |
+| `Provider` | `GitProvider?` | 远程平台：`GitHub` 或 `GitLab` |
+| `ProviderBaseUrl` | `string?` | 平台服务器的 HTTPS 源，例如 `https://github.com` |
+| `ProviderRepositoryId` | `string?` | 平台的数字仓库 ID。仓库改名或转移后不变 |
+| `DefaultBranch` | `string?` | 平台报告的默认分支 |
 | `IsPublic` | `bool` | 仓库是否公开可见 |
 | `GenerateSkill` | `bool` | 是否生成 Skill Markdown 产物 |
 | `ScanDepthMode` | `RepositoryScanDepthMode` | 扫描深度模式（Auto 或手动覆盖） |
@@ -59,6 +67,41 @@ erDiagram
 | `PrimaryLanguage` | `string?` | 主要编程语言 |
 | `UpdateIntervalMinutes` | `int?` | 自定义增量更新检查间隔 |
 | `IsDepartmentOwned` | `bool` | 是否为部门持有仓库 |
+
+### GitConnection
+
+一个共享的 Git 账户连接。一个提供商账户只有一条连接，所有登录用户都可以用它浏览目录和索引仓库。
+
+| 字段 | 类型 | 描述 |
+|-------|------|-------------|
+| `Provider` | `GitProvider` | `GitHub` 或 `GitLab` |
+| `NormalizedServerUrl` | `string` | 规范化的 HTTPS 源（GitHub 为 `https://github.com`） |
+| `ExternalAccountId` | `string` | 提供商返回的账户 ID。身份由提供商的回答决定，不由用户输入决定 |
+| `DisplayName` / `AccountName` | `string` / `string?` | 显示名称和账户登录名 |
+| `ProtectedToken` | `string` | 经 Data Protection 加密的令牌。永远不会出现在 API 响应中 |
+| `CreatedByUserId` | `string` | 创建者。创建者和管理员可以维护连接 |
+| `IsEnabled` | `bool` | 禁用后，目录浏览和新的索引工作被拒绝，已生成的文档保持可读 |
+| `LastValidatedAt` / `LastValidationErrorCode` | `DateTime?` / `string?` | 最近一次健康检查 |
+| `ConcurrencyStamp` | `string` | 每次修改都会更换。第二个写入者得到 `CONNECTION_CONFLICT` |
+
+唯一索引 `IX_GitConnections_Identity` 覆盖 `(Provider, NormalizedServerUrl, ExternalAccountId)`，并且包含已软删除的行：已删除的连接再次创建时被恢复，不会产生第二行。外键使用 `Restrict`，仍被仓库使用的连接不能删除。
+
+### GitConnectionAuditEvent
+
+连接的只追加安全记录。更新或删除一条审计事件会被 `MasterDbContext` 拒绝。
+
+| 字段 | 类型 | 描述 |
+|-------|------|-------------|
+| `GitConnectionId` | `string` | 所属连接 |
+| `EventType` | 枚举 | 例如 `Created`、`CredentialRotated`、`Disabled`、`RepositoryAssigned`、`BranchAdded`、`BranchRemoved` |
+| `Outcome` | 枚举 | `Success` 或 `Failure` |
+| `ActorUserId` / `RepositoryId` / `ErrorCode` | `string?` | 操作者、相关仓库和稳定错误码 |
+
+事件只保存标识符和稳定错误码，不保存令牌、加密内容、请求头或提供商的响应正文。
+
+### GitCredentialMigrationRecord
+
+旧凭据迁移的进度表，每个已处理的仓库一行：`State`（`Migrated`、`Failed`、`Blocked`；没有记录的仓库就是尚未处理）、`ErrorCode`、`GitConnectionId`、`AttemptCount`。流程见 [旧凭据迁移](/docs/deployment/legacy-credential-migration)。
 
 ### RepositoryBranch
 
@@ -147,6 +190,7 @@ public class CatalogItem
 | `Status` | `IncrementalUpdateStatus` | `Pending`、`Processing`、`Completed`、`Failed`、`Cancelled` |
 | `Priority` | `int` | 任务优先级（更高 = 更紧急） |
 | `IsManualTrigger` | `bool` | 是否通过 API 手动触发 |
+| `RequestedBy` | `string?` | 触发任务的用户 ID |
 | `RetryCount` | `int` | 重试次数 |
 | `ErrorMessage` | `string?` | 失败时的错误详情 |
 | `StartedAt` | `DateTime?` | 处理开始时间 |
@@ -161,6 +205,7 @@ public class CatalogItem
 | `RepositoryBranchId` | `string` | 目标分支 ID |
 | `Status` | 枚举 | 任务生命周期状态 |
 | `Priority` | `int` | 任务优先级 |
+| `RequestedBy` | `string?` | 触发任务的用户 ID |
 
 ### GraphifyArtifact
 
@@ -168,7 +213,15 @@ public class CatalogItem
 
 ### RepositoryGenerationLock
 
-仓库生成分布式锁记录，防止同一仓库被并发重复处理。
+仓库生成分布式锁记录，防止同一仓库被并发重复处理。`BranchId` 为空的锁覆盖整个仓库，`BranchId` 不为空的锁只覆盖一个分支：同一仓库的不同分支可以同时生成，仓库级锁与该仓库的所有锁互斥。
+
+### 稳定的仓库身份
+
+`Repository` 的 `(Provider, ProviderBaseUrl, ProviderRepositoryId)` 在未删除且已设置时唯一（索引 `IX_Repositories_RemoteIdentity`），所以同一个远程仓库只会有一条记录，即使它在提供商一侧改名。`(OrgName, RepoName)` 的唯一规则仍然保留，文档路径和 `/{org}/{repo}` 路由依赖它；两个远程仓库的路径冲突时，后来的仓库得到一个空闲的 slug（例如 `acme~gitlab`，然后是数字）。
+
+### 旧凭据字段
+
+`AuthAccount` 和 `AuthPassword` 仍在模型和数据库中。新的提交和管理员更新不再写入它们，只有 `GitConnectionId` 为空的旧仓库才会读取它们。删除这两列的步骤已写好并在副本上测试，但在本版本中没有启用，见 [旧凭据迁移](/docs/deployment/legacy-credential-migration)。
 
 ### RepositorySource
 
@@ -231,6 +284,7 @@ public class CatalogItem
 |------|------|
 | `RepositoryAssignment` | 仓库与部门的分配关系 |
 | `RepositoryProcessingLog` | 仓库处理日志，记录每次生成的详细过程 |
+| `GitConnection` / `GitConnectionAuditEvent` | 共享 Git 连接及其审计记录（见上文） |
 | `TranslationTask` | 文档翻译任务 |
 | `BranchGenerationTask` | 分支级 Wiki 生成任务 |
 | `GraphifyArtifact` | Graphify 图谱产物 |

@@ -39,30 +39,28 @@ export default function AppsPage() {
   const [deletingApp, setDeletingApp] = useState<ChatAppDto | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  const fetchApps = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const data = await getUserApps();
+  const fetchApps = useCallback(() => {
+    return getUserApps().then(data => {
       setApps(data);
-    } catch (err) {
+      setError(null);
+    }).catch(err => {
       setError(err instanceof Error ? err.message : "Failed to load apps");
-    } finally {
+    }).finally(() => {
       setIsLoading(false);
-    }
+    });
   }, []);
 
   useEffect(() => {
     if (!authLoading && isAuthenticated) {
       fetchApps();
-    } else if (!authLoading && !isAuthenticated) {
-      setIsLoading(false);
     }
   }, [authLoading, isAuthenticated, fetchApps]);
 
   const handleCreateSuccess = useCallback(() => {
     setIsFormOpen(false);
     setEditingApp(null);
+    setIsLoading(true);
+    setError(null);
     fetchApps();
   }, [fetchApps]);
 

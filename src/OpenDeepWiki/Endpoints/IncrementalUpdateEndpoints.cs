@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using OpenDeepWiki.EFCore;
 using OpenDeepWiki.Entities;
+using OpenDeepWiki.Services.Auth;
 using OpenDeepWiki.Services.Repositories;
 
 namespace OpenDeepWiki.Endpoints;
@@ -14,6 +15,8 @@ public class IncrementalUpdateEndpointsLogger { }
 /// <summary>
 /// 增量更新 API 端点
 /// 提供手动触发增量更新、查询任务状态和重试失败任务的功能
+/// Every route needs a signed-in user. Any signed-in user may update, read, and retry the incremental
+/// tasks of any repository branch: branch work is shared across the workspace.
 /// </summary>
 public static class IncrementalUpdateEndpoints
 {
@@ -24,6 +27,7 @@ public static class IncrementalUpdateEndpoints
     {
         // 仓库增量更新触发端点
         var repoGroup = app.MapGroup("/api/v1/repositories")
+            .RequireAuthorization()
             .WithTags("增量更新");
 
         repoGroup.MapPost("/{repositoryId}/branches/{branchId}/incremental-update", TriggerIncrementalUpdateAsync)
@@ -31,8 +35,13 @@ public static class IncrementalUpdateEndpoints
             .WithSummary("手动触发增量更新")
             .WithDescription("为指定仓库和分支创建一个高优先级的增量更新任务");
 
+        repoGroup.MapGet("/{repositoryId}/incremental-updates", ListTasksAsync)
+            .WithName("ListIncrementalUpdateTasks")
+            .WithSummary("列出仓库的增量更新任务");
+
         // 增量更新任务管理端点
         var taskGroup = app.MapGroup("/api/v1/incremental-updates")
+            .RequireAuthorization()
             .WithTags("增量更新任务");
 
         taskGroup.MapGet("/{taskId}", GetTaskStatusAsync)
@@ -57,55 +66,37 @@ public static class IncrementalUpdateEndpoints
         string branchId,
         [FromServices] IIncrementalUpdateService updateService,
         [FromServices] IContext context,
+        [FromServices] IUserContext userContext,
+        [FromServices] IBranchActionAuditor auditor,
         [FromServices] ILogger<IncrementalUpdateEndpointsLogger> logger,
         CancellationToken cancellationToken)
     {
+        var unauthorized = await AuthorizeRepositoryAsync(context, userContext, repositoryId, cancellationToken);
+        if (unauthorized is not null)
+        {
+            return unauthorized;
+        }
+
         logger.LogInformation(
-            "Manual incremental update requested. RepositoryId: {RepositoryId}, BranchId: {BranchId}",
-            repositoryId, branchId);
+            "Manual incremental update requested. RepositoryId: {RepositoryId}, BranchId: {BranchId}, UserId: {UserId}",
+            repositoryId, branchId, userContext.UserId);
 
         try
         {
-            // 验证仓库是否存在
-            var repository = await context.Repositories
-                .FirstOrDefaultAsync(r => r.Id == repositoryId, cancellationToken);
+            // The service checks that the branch exists and belongs to the repository.
+            var taskId = await updateService.TriggerManualUpdateAsync(
+                repositoryId, branchId, cancellationToken, userContext.UserId);
 
-            if (repository == null)
-            {
-                logger.LogWarning("Repository not found. RepositoryId: {RepositoryId}", repositoryId);
-                return Results.NotFound(new IncrementalUpdateErrorResponse
-                {
-                    Success = false,
-                    Error = "仓库不存在",
-                    ErrorCode = "REPOSITORY_NOT_FOUND"
-                });
-            }
-
-            // 验证分支是否存在
-            var branch = await context.RepositoryBranches
-                .FirstOrDefaultAsync(b => b.Id == branchId && b.RepositoryId == repositoryId, cancellationToken);
-
-            if (branch == null)
-            {
-                logger.LogWarning("Branch not found. BranchId: {BranchId}", branchId);
-                return Results.NotFound(new IncrementalUpdateErrorResponse
-                {
-                    Success = false,
-                    Error = "分支不存在",
-                    ErrorCode = "BRANCH_NOT_FOUND"
-                });
-            }
-
-            // 触发增量更新
-            var taskId = await updateService.TriggerManualUpdateAsync(repositoryId, branchId, cancellationToken);
-
-            // 获取任务状态
             var task = await context.IncrementalUpdateTasks
+                .AsNoTracking()
                 .FirstOrDefaultAsync(t => t.Id == taskId, cancellationToken);
 
             logger.LogInformation(
                 "Incremental update task created/found. TaskId: {TaskId}, Status: {Status}",
                 taskId, task?.Status);
+
+            await auditor.RecordAsync(
+                repositoryId, branchId, userContext.UserId, GitConnectionAuditEventType.BranchSyncRequested, cancellationToken);
 
             return Results.Ok(new TriggerIncrementalUpdateResponse
             {
@@ -116,6 +107,14 @@ public static class IncrementalUpdateEndpoints
                     ? "任务正在处理中"
                     : "增量更新任务已创建"
             });
+        }
+        catch (IncrementalUpdateRejectedException ex)
+        {
+            logger.LogWarning(
+                "Incremental update rejected. RepositoryId: {RepositoryId}, BranchId: {BranchId}, ErrorCode: {ErrorCode}",
+                repositoryId, branchId, ex.ErrorCode);
+
+            return ToRejectedResult(ex.ErrorCode);
         }
         catch (Exception ex)
         {
@@ -128,12 +127,133 @@ public static class IncrementalUpdateEndpoints
                 {
                     Success = false,
                     Error = "触发增量更新失败",
-                    ErrorCode = "TRIGGER_FAILED",
-                    Details = ex.Message
+                    ErrorCode = "TRIGGER_FAILED"
                 },
                 statusCode: StatusCodes.Status500InternalServerError);
         }
     }
+
+    private static IResult ToRejectedResult(string errorCode)
+    {
+        var (status, message) = errorCode switch
+        {
+            IncrementalUpdateErrorCodes.RepositoryNotFound => (StatusCodes.Status404NotFound, "仓库不存在"),
+            IncrementalUpdateErrorCodes.BranchNotFound => (StatusCodes.Status404NotFound, "分支不存在"),
+            IncrementalUpdateErrorCodes.BranchGenerationActive => (StatusCodes.Status409Conflict, "该分支已有 full generation 任务正在排队或处理中"),
+            _ => (StatusCodes.Status400BadRequest, "增量更新请求被拒绝")
+        };
+
+        return Results.Json(
+            new IncrementalUpdateErrorResponse { Success = false, Error = message, ErrorCode = errorCode },
+            statusCode: status);
+    }
+
+    /// <summary>
+    /// A signed-in user who can see the repository (public, own, or any as Admin). A repository that the user cannot
+    /// see is reported as missing.
+    /// </summary>
+    private static async Task<IResult?> AuthorizeRepositoryAsync(
+        IContext context, IUserContext userContext, string repositoryId, CancellationToken cancellationToken)
+    {
+        var unauthorized = RequireSignedIn(userContext);
+        if (unauthorized is not null)
+        {
+            return unauthorized;
+        }
+
+        var visible = await context.Repositories
+            .AsNoTracking()
+            .Where(RepositoryReadAccess.VisibleTo(userContext))
+            .AnyAsync(r => r.Id == repositoryId && !r.IsDeleted, cancellationToken);
+        return visible ? null : ToRejectedResult(IncrementalUpdateErrorCodes.RepositoryNotFound);
+    }
+
+    /// <summary>
+    /// A signed-in user who can see the repository of the task. A task of a hidden repository is reported as missing.
+    /// </summary>
+    private static async Task<IResult?> AuthorizeTaskAsync(
+        IContext context, IUserContext userContext, string taskId, CancellationToken cancellationToken)
+    {
+        var unauthorized = RequireSignedIn(userContext);
+        if (unauthorized is not null)
+        {
+            return unauthorized;
+        }
+
+        var repositoryId = await context.IncrementalUpdateTasks
+            .AsNoTracking()
+            .Where(t => t.Id == taskId)
+            .Select(t => t.RepositoryId)
+            .FirstOrDefaultAsync(cancellationToken);
+        var hidden = repositoryId is null
+                     || await AuthorizeRepositoryAsync(context, userContext, repositoryId, cancellationToken) is not null;
+        return hidden
+            ? Results.NotFound(new IncrementalUpdateErrorResponse { Success = false, Error = "任务不存在", ErrorCode = "TASK_NOT_FOUND" })
+            : null;
+    }
+
+    private static IResult? RequireSignedIn(IUserContext userContext)
+    {
+        return userContext.IsAuthenticated && !string.IsNullOrWhiteSpace(userContext.UserId)
+            ? null
+            : Results.Json(
+                new IncrementalUpdateErrorResponse { Success = false, Error = "请先登录", ErrorCode = "UNAUTHORIZED" },
+                statusCode: StatusCodes.Status401Unauthorized);
+    }
+
+    /// <summary>
+    /// 列出仓库的增量更新任务（最新的在前）
+    /// GET /api/v1/repositories/{repositoryId}/incremental-updates
+    /// </summary>
+    private static async Task<IResult> ListTasksAsync(
+        string repositoryId,
+        [FromServices] IContext context,
+        [FromServices] IUserContext userContext,
+        CancellationToken cancellationToken,
+        [FromQuery] string? branchId = null,
+        [FromQuery] int limit = 20)
+    {
+        var unauthorized = await AuthorizeRepositoryAsync(context, userContext, repositoryId, cancellationToken);
+        if (unauthorized is not null)
+        {
+            return unauthorized;
+        }
+
+        var take = limit < 1 ? 20 : Math.Min(limit, 100);
+        var tasks = await context.IncrementalUpdateTasks
+            .AsNoTracking()
+            .Include(t => t.Repository)
+            .Include(t => t.Branch)
+            .Where(t => t.RepositoryId == repositoryId && !t.IsDeleted)
+            .Where(t => branchId == null || t.BranchId == branchId)
+            .OrderByDescending(t => t.CreatedAt)
+            .Take(take)
+            .ToListAsync(cancellationToken);
+
+        return Results.Ok(tasks.Select(ToTaskResponse).ToList());
+    }
+
+    private static IncrementalUpdateTaskResponse ToTaskResponse(IncrementalUpdateTask task) => new()
+    {
+        Success = true,
+        TaskId = task.Id,
+        RepositoryId = task.RepositoryId,
+        RepositoryName = task.Repository != null
+            ? $"{task.Repository.OrgName}/{task.Repository.RepoName}"
+            : null,
+        BranchId = task.BranchId,
+        BranchName = task.Branch?.BranchName,
+        Status = task.Status.ToString(),
+        Priority = task.Priority,
+        IsManualTrigger = task.IsManualTrigger,
+        PreviousCommitId = task.PreviousCommitId,
+        TargetCommitId = task.TargetCommitId,
+        RetryCount = task.RetryCount,
+        ErrorMessage = task.ErrorMessage,
+        CreatedAt = task.CreatedAt,
+        StartedAt = task.StartedAt,
+        CompletedAt = task.CompletedAt
+    };
 
 
     /// <summary>
@@ -143,9 +263,16 @@ public static class IncrementalUpdateEndpoints
     private static async Task<IResult> GetTaskStatusAsync(
         string taskId,
         [FromServices] IContext context,
+        [FromServices] IUserContext userContext,
         [FromServices] ILogger<IncrementalUpdateEndpointsLogger> logger,
         CancellationToken cancellationToken)
     {
+        var unauthorized = await AuthorizeTaskAsync(context, userContext, taskId, cancellationToken);
+        if (unauthorized is not null)
+        {
+            return unauthorized;
+        }
+
         logger.LogDebug("Getting task status. TaskId: {TaskId}", taskId);
 
         try
@@ -166,27 +293,7 @@ public static class IncrementalUpdateEndpoints
                 });
             }
 
-            return Results.Ok(new IncrementalUpdateTaskResponse
-            {
-                Success = true,
-                TaskId = task.Id,
-                RepositoryId = task.RepositoryId,
-                RepositoryName = task.Repository != null
-                    ? $"{task.Repository.OrgName}/{task.Repository.RepoName}"
-                    : null,
-                BranchId = task.BranchId,
-                BranchName = task.Branch?.BranchName,
-                Status = task.Status.ToString(),
-                Priority = task.Priority,
-                IsManualTrigger = task.IsManualTrigger,
-                PreviousCommitId = task.PreviousCommitId,
-                TargetCommitId = task.TargetCommitId,
-                RetryCount = task.RetryCount,
-                ErrorMessage = task.ErrorMessage,
-                CreatedAt = task.CreatedAt,
-                StartedAt = task.StartedAt,
-                CompletedAt = task.CompletedAt
-            });
+            return Results.Ok(ToTaskResponse(task));
         }
         catch (Exception ex)
         {
@@ -197,8 +304,7 @@ public static class IncrementalUpdateEndpoints
                 {
                     Success = false,
                     Error = "获取任务状态失败",
-                    ErrorCode = "GET_STATUS_FAILED",
-                    Details = ex.Message
+                    ErrorCode = "GET_STATUS_FAILED"
                 },
                 statusCode: StatusCodes.Status500InternalServerError);
         }
@@ -211,10 +317,18 @@ public static class IncrementalUpdateEndpoints
     private static async Task<IResult> RetryFailedTaskAsync(
         string taskId,
         [FromServices] IContext context,
+        [FromServices] IUserContext userContext,
+        [FromServices] IBranchActionAuditor auditor,
         [FromServices] ILogger<IncrementalUpdateEndpointsLogger> logger,
         CancellationToken cancellationToken)
     {
-        logger.LogInformation("Retry requested for task. TaskId: {TaskId}", taskId);
+        var unauthorized = await AuthorizeTaskAsync(context, userContext, taskId, cancellationToken);
+        if (unauthorized is not null)
+        {
+            return unauthorized;
+        }
+
+        logger.LogInformation("Retry requested for task. TaskId: {TaskId}, UserId: {UserId}", taskId, userContext.UserId);
 
         try
         {
@@ -254,12 +368,17 @@ public static class IncrementalUpdateEndpoints
             task.StartedAt = null;
             task.CompletedAt = null;
             task.UpdatedAt = DateTime.UtcNow;
+            task.RequestedBy = userContext.UserId;
 
             await context.SaveChangesAsync(cancellationToken);
 
             logger.LogInformation(
                 "Task reset for retry. TaskId: {TaskId}, RetryCount: {RetryCount}",
                 taskId, task.RetryCount);
+
+            await auditor.RecordAsync(
+                task.RepositoryId, task.BranchId, userContext.UserId,
+                GitConnectionAuditEventType.BranchTaskRetried, cancellationToken);
 
             return Results.Ok(new RetryTaskResponse
             {
@@ -279,8 +398,7 @@ public static class IncrementalUpdateEndpoints
                 {
                     Success = false,
                     Error = "重试任务失败",
-                    ErrorCode = "RETRY_FAILED",
-                    Details = ex.Message
+                    ErrorCode = "RETRY_FAILED"
                 },
                 statusCode: StatusCodes.Status500InternalServerError);
         }

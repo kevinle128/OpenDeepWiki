@@ -115,11 +115,9 @@ export default function RecommendPage() {
   const [dislikingId, setDislikingId] = useState<string | null>(null);
 
   // 个性化策略仅对已登录用户可见，未登录时回到默认策略
-  useEffect(() => {
-    if (!user && strategy === "personalized") {
-      setStrategy("default");
-    }
-  }, [user, strategy]);
+  if (!user && strategy === "personalized") {
+    setStrategy("default");
+  }
 
   // 把当前筛选同步到地址栏，保证链接可分享、可回退
   useEffect(() => {
@@ -138,26 +136,24 @@ export default function RecommendPage() {
       .catch(console.error);
   }, []);
 
-  const fetchRecommendations = useCallback(async () => {
-    setLoading(true);
-    try {
-      const params: RecommendationParams = {
-        userId: user?.id,
-        limit: 20,
-        strategy,
-        language: selectedLanguage === "all" ? undefined : selectedLanguage,
-        windowDays: timeWindow === "all" ? undefined : Number(timeWindow),
-      };
-      const response = await getRecommendations(params);
+  const fetchRecommendations = useCallback(() => {
+    const params: RecommendationParams = {
+      userId: user?.id,
+      limit: 20,
+      strategy,
+      language: selectedLanguage === "all" ? undefined : selectedLanguage,
+      windowDays: timeWindow === "all" ? undefined : Number(timeWindow),
+    };
+    return getRecommendations(params).then(response => {
       setRepos(response.items);
       setTotalCandidates(response.totalCandidates);
       setTimeWindowFallback(Boolean(response.timeWindowFallback));
-    } catch (error) {
+    }).catch(error => {
       console.error("Failed to fetch recommendations:", error);
-    } finally {
+    }).finally(() => {
       setLoading(false);
-    }
-  }, [user?.id, strategy, selectedLanguage, timeWindow]);
+    });
+  }, [user, strategy, selectedLanguage, timeWindow]);
 
   useEffect(() => {
     fetchRecommendations();
@@ -234,7 +230,7 @@ export default function RecommendPage() {
           <div className="flex flex-wrap items-center gap-2">
             <Select
               value={timeWindow}
-              onValueChange={(v) => setTimeWindow(v as TimeWindow)}
+              onValueChange={(v) => { setLoading(true); setTimeWindow(v as TimeWindow); }}
             >
               <SelectTrigger className="w-[150px]">
                 <CalendarRange className="h-4 w-4 mr-2" />
@@ -247,7 +243,7 @@ export default function RecommendPage() {
                 <SelectItem value="90">{t("recommend.timeWindow.quarter")}</SelectItem>
               </SelectContent>
             </Select>
-            <Select value={selectedLanguage} onValueChange={setSelectedLanguage}>
+            <Select value={selectedLanguage} onValueChange={(value) => { setLoading(true); setSelectedLanguage(value); }}>
               <SelectTrigger className="w-[140px]">
                 <Code2 className="h-4 w-4 mr-2" />
                 <SelectValue placeholder={t("recommend.allLanguages")} />
@@ -264,7 +260,7 @@ export default function RecommendPage() {
             <Button 
               variant="outline" 
               size="sm" 
-              onClick={fetchRecommendations}
+              onClick={() => { setLoading(true); void fetchRecommendations(); }}
               disabled={loading}
             >
               <RefreshCw className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`} />
@@ -273,7 +269,7 @@ export default function RecommendPage() {
           </div>
         </div>
 
-        <Tabs value={strategy} onValueChange={(v) => setStrategy(v as Strategy)}>
+        <Tabs value={strategy} onValueChange={(v) => { setLoading(true); setStrategy(v as Strategy); }}>
           <TabsList>
             <TabsTrigger value="default" className="gap-2">
               <Star className="h-4 w-4" />

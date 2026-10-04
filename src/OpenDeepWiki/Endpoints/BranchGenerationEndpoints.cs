@@ -7,17 +7,28 @@ using OpenDeepWiki.Services.Repositories;
 
 namespace OpenDeepWiki.Endpoints;
 
+/// <summary>
+/// Full-generation endpoints of indexed branches. Every authenticated user can run them: branch work is shared
+/// across the workspace, while deleting a repository or changing its visibility keeps its own stricter rules.
+/// </summary>
 public static class BranchGenerationEndpoints
 {
+    private const int DefaultTaskListLimit = 20;
+    private const int MaxTaskListLimit = 100;
+
     public static IEndpointRouteBuilder MapBranchGenerationEndpoints(this IEndpointRouteBuilder app)
     {
         var repoGroup = app.MapGroup("/api/v1/repositories")
+            .RequireAuthorization()
             .WithTags("Branch Generation");
 
         repoGroup.MapPost("/{repositoryId}/branches/{branchId}/generation-tasks/full", EnqueueFullGenerationAsync)
             .WithName("EnqueueBranchFullGeneration");
+        repoGroup.MapGet("/{repositoryId}/branch-generation-tasks", ListTasksAsync)
+            .WithName("ListBranchGenerationTasks");
 
         var taskGroup = app.MapGroup("/api/v1/branch-generation-tasks")
+            .RequireAuthorization()
             .WithTags("Branch Generation Tasks");
 
         taskGroup.MapGet("/{taskId}", GetTaskAsync)
@@ -36,15 +47,23 @@ public static class BranchGenerationEndpoints
         [FromServices] IContext context,
         [FromServices] IUserContext userContext,
         [FromServices] IBranchGenerationTaskService taskService,
+        [FromServices] IBranchActionAuditor auditor,
         CancellationToken cancellationToken)
     {
-        var authorizationResult = await AuthorizeRepositoryMutationAsync(context, userContext, repositoryId, cancellationToken);
+        var authorizationResult = await AuthorizeBranchOperationAsync(context, userContext, repositoryId, cancellationToken);
         if (authorizationResult is not null)
         {
             return authorizationResult;
         }
 
-        var result = await taskService.EnqueueFullGenerationAsync(repositoryId, branchId, cancellationToken: cancellationToken);
+        var result = await taskService.EnqueueFullGenerationAsync(
+            repositoryId, branchId, userContext.UserId, cancellationToken: cancellationToken);
+        if (result.Success)
+        {
+            await auditor.RecordAsync(
+                repositoryId, branchId, userContext.UserId, GitConnectionAuditEventType.BranchRebuildRequested, cancellationToken);
+        }
+
         return ToResult(result, StatusCodes.Status201Created);
     }
 
@@ -53,15 +72,23 @@ public static class BranchGenerationEndpoints
         [FromServices] IContext context,
         [FromServices] IUserContext userContext,
         [FromServices] IBranchGenerationTaskService taskService,
+        [FromServices] IBranchActionAuditor auditor,
         CancellationToken cancellationToken)
     {
-        var authorizationResult = await AuthorizeTaskMutationAsync(context, userContext, taskId, cancellationToken);
+        var authorizationResult = await AuthorizeBranchTaskOperationAsync(context, userContext, taskId, cancellationToken);
         if (authorizationResult is not null)
         {
             return authorizationResult;
         }
 
         var result = await taskService.RetryAsync(taskId, cancellationToken);
+        if (result.Success && result.Task is not null)
+        {
+            await auditor.RecordAsync(
+                result.Task.RepositoryId, result.Task.BranchId, userContext.UserId,
+                GitConnectionAuditEventType.BranchTaskRetried, cancellationToken);
+        }
+
         return ToResult(result);
     }
 
@@ -70,23 +97,38 @@ public static class BranchGenerationEndpoints
         [FromServices] IContext context,
         [FromServices] IUserContext userContext,
         [FromServices] IBranchGenerationTaskService taskService,
+        [FromServices] IBranchActionAuditor auditor,
         CancellationToken cancellationToken)
     {
-        var authorizationResult = await AuthorizeTaskMutationAsync(context, userContext, taskId, cancellationToken);
+        var authorizationResult = await AuthorizeBranchTaskOperationAsync(context, userContext, taskId, cancellationToken);
         if (authorizationResult is not null)
         {
             return authorizationResult;
         }
 
         var result = await taskService.CancelAsync(taskId, cancellationToken);
+        if (result.Success && result.Task is not null)
+        {
+            await auditor.RecordAsync(
+                result.Task.RepositoryId, result.Task.BranchId, userContext.UserId,
+                GitConnectionAuditEventType.BranchTaskCancelled, cancellationToken);
+        }
+
         return ToResult(result);
     }
 
     private static async Task<IResult> GetTaskAsync(
         string taskId,
         [FromServices] IContext context,
+        [FromServices] IUserContext userContext,
         CancellationToken cancellationToken)
     {
+        var unauthorized = await AuthorizeBranchTaskOperationAsync(context, userContext, taskId, cancellationToken);
+        if (unauthorized is not null)
+        {
+            return unauthorized;
+        }
+
         var task = await context.BranchGenerationTasks
             .AsNoTracking()
             .Include(item => item.Repository)
@@ -98,49 +140,71 @@ public static class BranchGenerationEndpoints
             : Results.Ok(BranchGenerationTaskResponse.FromTask(task));
     }
 
-    public static async Task<IResult?> AuthorizeRepositoryMutationAsync(
+    private static async Task<IResult> ListTasksAsync(
+        string repositoryId,
+        [FromServices] IContext context,
+        [FromServices] IUserContext userContext,
+        CancellationToken cancellationToken,
+        [FromQuery] string? branchId = null,
+        [FromQuery] int limit = DefaultTaskListLimit)
+    {
+        var unauthorized = await AuthorizeBranchOperationAsync(context, userContext, repositoryId, cancellationToken);
+        if (unauthorized is not null)
+        {
+            return unauthorized;
+        }
+
+        var take = limit < 1 ? DefaultTaskListLimit : Math.Min(limit, MaxTaskListLimit);
+        var tasks = await context.BranchGenerationTasks
+            .AsNoTracking()
+            .Include(item => item.Repository)
+            .Include(item => item.Branch)
+            .Where(item => item.RepositoryId == repositoryId && !item.IsDeleted)
+            .Where(item => branchId == null || item.BranchId == branchId)
+            .OrderByDescending(item => item.CreatedAt)
+            .Take(take)
+            .ToListAsync(cancellationToken);
+
+        return Results.Ok(tasks.Select(BranchGenerationTaskResponse.FromTask).ToList());
+    }
+
+    /// <summary>
+    /// Branch work needs a signed-in user and a repository that the user can see (public, own, or any as Admin), and
+    /// nothing more. A repository that the user cannot see is reported as missing. The name says so on purpose:
+    /// repository-level changes (delete, visibility) must not reuse this check.
+    /// </summary>
+    public static async Task<IResult?> AuthorizeBranchOperationAsync(
         IContext context,
         IUserContext userContext,
         string repositoryId,
         CancellationToken cancellationToken)
     {
-        if (!userContext.IsAuthenticated || string.IsNullOrWhiteSpace(userContext.UserId))
+        var unauthorized = RequireSignedIn(userContext);
+        if (unauthorized is not null)
         {
-            return Results.Json(
-                new BranchGenerationErrorResponse(false, "UNAUTHORIZED", "请先登录"),
-                statusCode: StatusCodes.Status401Unauthorized);
+            return unauthorized;
         }
 
-        var repository = await context.Repositories
+        var repositoryExists = await context.Repositories
             .AsNoTracking()
-            .FirstOrDefaultAsync(item => item.Id == repositoryId && !item.IsDeleted, cancellationToken);
+            .Where(RepositoryReadAccess.VisibleTo(userContext))
+            .AnyAsync(item => item.Id == repositoryId && !item.IsDeleted, cancellationToken);
 
-        if (repository is null)
-        {
-            return Results.NotFound(new BranchGenerationErrorResponse(false, "REPOSITORY_NOT_FOUND", "仓库不存在"));
-        }
-
-        if (repository.OwnerUserId == userContext.UserId || userContext.User?.IsInRole("Admin") == true)
-        {
-            return null;
-        }
-
-        return Results.Json(
-            new BranchGenerationErrorResponse(false, "FORBIDDEN", "无权限操作该仓库"),
-            statusCode: StatusCodes.Status403Forbidden);
+        return repositoryExists
+            ? null
+            : Results.NotFound(new BranchGenerationErrorResponse(false, "REPOSITORY_NOT_FOUND", "仓库不存在"));
     }
 
-    public static async Task<IResult?> AuthorizeTaskMutationAsync(
+    public static async Task<IResult?> AuthorizeBranchTaskOperationAsync(
         IContext context,
         IUserContext userContext,
         string taskId,
         CancellationToken cancellationToken)
     {
-        if (!userContext.IsAuthenticated || string.IsNullOrWhiteSpace(userContext.UserId))
+        var unauthorized = RequireSignedIn(userContext);
+        if (unauthorized is not null)
         {
-            return Results.Json(
-                new BranchGenerationErrorResponse(false, "UNAUTHORIZED", "请先登录"),
-                statusCode: StatusCodes.Status401Unauthorized);
+            return unauthorized;
         }
 
         var task = await context.BranchGenerationTasks
@@ -152,7 +216,16 @@ public static class BranchGenerationEndpoints
             return Results.NotFound(new BranchGenerationErrorResponse(false, "TASK_NOT_FOUND", "任务不存在"));
         }
 
-        return await AuthorizeRepositoryMutationAsync(context, userContext, task.RepositoryId, cancellationToken);
+        return await AuthorizeBranchOperationAsync(context, userContext, task.RepositoryId, cancellationToken);
+    }
+
+    private static IResult? RequireSignedIn(IUserContext userContext)
+    {
+        return userContext.IsAuthenticated && !string.IsNullOrWhiteSpace(userContext.UserId)
+            ? null
+            : Results.Json(
+                new BranchGenerationErrorResponse(false, "UNAUTHORIZED", "请先登录"),
+                statusCode: StatusCodes.Status401Unauthorized);
     }
 
     private static IResult ToResult(BranchGenerationTaskResult result, int successStatusCode = StatusCodes.Status200OK)

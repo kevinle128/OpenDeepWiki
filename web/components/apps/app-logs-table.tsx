@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { useTranslations } from "@/hooks/use-translations";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -24,27 +24,29 @@ export function AppLogsTable({ appId }: AppLogsTableProps) {
   const [searchKeyword, setSearchKeyword] = useState("");
   const [page, setPage] = useState(1);
   const pageSize = 10;
-
-  const fetchLogs = useCallback(async () => {
+  const requestKey = `${appId}:${searchKeyword}:${page}`;
+  const [lastRequestKey, setLastRequestKey] = useState(requestKey);
+  if (requestKey !== lastRequestKey) {
+    setLastRequestKey(requestKey);
     setIsLoading(true);
     setError(null);
-    try {
-      const data = await getAppLogs(appId, {
+  }
+
+  useEffect(() => {
+    let active = true;
+    getAppLogs(appId, {
         keyword: searchKeyword || undefined,
         page,
         pageSize,
+      }).then((data) => {
+        if (active) setLogs(data);
+      }).catch((err: unknown) => {
+        if (active) setError(err instanceof Error ? err.message : "Failed to load logs");
+      }).finally(() => {
+        if (active) setIsLoading(false);
       });
-      setLogs(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load logs");
-    } finally {
-      setIsLoading(false);
-    }
+    return () => { active = false; };
   }, [appId, searchKeyword, page]);
-
-  useEffect(() => {
-    fetchLogs();
-  }, [fetchLogs]);
 
   const handleSearch = () => {
     setSearchKeyword(keyword);

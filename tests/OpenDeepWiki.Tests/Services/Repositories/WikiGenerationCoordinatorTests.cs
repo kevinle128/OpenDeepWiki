@@ -144,6 +144,96 @@ public class WikiGenerationCoordinatorTests
         Assert.Null(generationLock.InstanceId);
     }
 
+    [Fact]
+    public async Task TryBeginAsync_TwoBranchesOfOneRepository_RunTogetherWithTheirOwnLeases()
+    {
+        using var context = CreateContext();
+        SeedRepository(context, "repo-a");
+        await context.SaveChangesAsync();
+
+        var coordinator = CreateCoordinator(context, "instance-a", maxConcurrent: 2);
+
+        var first = await BeginBranchAsync(coordinator, context, "repo-a", "b1", "task-1");
+        var second = await BeginBranchAsync(coordinator, context, "repo-a", "b2", "task-2");
+
+        Assert.Equal(WikiGenerationAcquireStatus.Acquired, first.Status);
+        Assert.Equal(WikiGenerationAcquireStatus.Acquired, second.Status);
+        Assert.Equal("b1", first.Lease!.BranchId);
+        Assert.Equal("b2", second.Lease!.BranchId);
+        Assert.Equal(2, await context.RepositoryGenerationLocks.CountAsync());
+    }
+
+    [Fact]
+    public async Task TryBeginAsync_WhenTheSameBranchIsRunning_ReturnsRepositoryBusy()
+    {
+        using var context = CreateContext();
+        SeedRepository(context, "repo-a");
+        await context.SaveChangesAsync();
+
+        var first = CreateCoordinator(context, "instance-a", maxConcurrent: 2);
+        var second = CreateCoordinator(context, "instance-b", maxConcurrent: 2);
+        Assert.Equal(WikiGenerationAcquireStatus.Acquired, (await BeginBranchAsync(first, context, "repo-a", "b1", "task-1")).Status);
+
+        var busy = await BeginBranchAsync(second, context, "repo-a", "b1", "task-2", RepositoryGenerationLockOwnerType.IncrementalTask);
+
+        Assert.Equal(WikiGenerationAcquireStatus.RepositoryBusy, busy.Status);
+    }
+
+    [Fact]
+    public async Task TryBeginAsync_WhenClusterIsFull_KeepsTheBranchReservationForLater()
+    {
+        using var context = CreateContext();
+        SeedRepository(context, "repo-a");
+        await context.SaveChangesAsync();
+        var lockService = new RepositoryGenerationLockService(
+            context, new WikiGenerationInstanceIdentity("api"), new StaticOptionsMonitor<WikiGeneratorOptions>(new WikiGeneratorOptions()));
+        Assert.True(await lockService.TryAcquireAsync(
+            context, "repo-a", RepositoryGenerationLockOwnerType.BranchTask, "task-1",
+            RepositoryGenerationLockScope.Branch, branchId: "b1"));
+        var coordinator = CreateCoordinator(context, "instance-a", maxConcurrent: 1);
+        Assert.Equal(WikiGenerationAcquireStatus.Acquired, (await BeginRepositoryAsync(coordinator, context, "repo-b")).Status);
+
+        var full = await BeginBranchAsync(coordinator, context, "repo-a", "b1", "task-1");
+
+        Assert.Equal(WikiGenerationAcquireStatus.ClusterFull, full.Status);
+        var reservation = await context.RepositoryGenerationLocks.SingleAsync(item => item.RepositoryId == "repo-a");
+        Assert.Equal("b1", reservation.BranchId);
+        Assert.Null(reservation.InstanceId);
+    }
+
+    [Fact]
+    public async Task ReleaseAsync_OfABranchLease_KeepsTheOtherBranchLock()
+    {
+        using var context = CreateContext();
+        SeedRepository(context, "repo-a");
+        await context.SaveChangesAsync();
+        var coordinator = CreateCoordinator(context, "instance-a", maxConcurrent: 2);
+        var first = await BeginBranchAsync(coordinator, context, "repo-a", "b1", "task-1");
+        await BeginBranchAsync(coordinator, context, "repo-a", "b2", "task-2");
+
+        await coordinator.ReleaseAsync(context, first.Lease!);
+
+        Assert.Equal("b2", (await context.RepositoryGenerationLocks.SingleAsync()).BranchId);
+    }
+
+    private static Task<(WikiGenerationAcquireStatus Status, WikiGenerationWorkLease? Lease)> BeginBranchAsync(
+        IWikiGenerationCoordinator coordinator,
+        IContext context,
+        string repositoryId,
+        string branchId,
+        string ownerId,
+        RepositoryGenerationLockOwnerType ownerType = RepositoryGenerationLockOwnerType.BranchTask)
+    {
+        return coordinator.TryBeginAsync(
+            context,
+            repositoryId,
+            ownerType,
+            ownerId,
+            RepositoryGenerationLockScope.Branch,
+            WikiGenerationWorkType.BranchTask,
+            branchId: branchId);
+    }
+
     private static Task<(WikiGenerationAcquireStatus Status, WikiGenerationWorkLease? Lease)> BeginRepositoryAsync(
         IWikiGenerationCoordinator coordinator,
         IContext context,

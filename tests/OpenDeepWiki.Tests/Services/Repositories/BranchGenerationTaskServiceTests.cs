@@ -118,13 +118,152 @@ public class BranchGenerationTaskServiceTests
     }
 
     [Fact]
-    public async Task AuthorizeRepositoryMutationAsync_WhenAnonymous_ReturnsUnauthorized()
+    public async Task EnqueueFullGenerationAsync_WhenOnlyAnotherBranchHasAnActiveTask_StillEnqueues()
+    {
+        using var context = CreateContext();
+        var repository = SeedRepository(context, RepositoryStatus.Completed);
+        var busy = SeedBranchWithDocument(context, repository.Id, "busy");
+        var idle = SeedBranchWithDocument(context, repository.Id, "idle");
+        context.BranchGenerationTasks.Add(new BranchGenerationTask
+        {
+            Id = "busy-task",
+            RepositoryId = repository.Id,
+            BranchId = busy.BranchId,
+            Status = BranchGenerationTaskStatus.Processing,
+            Mode = BranchGenerationTaskMode.Full
+        });
+        context.RepositoryGenerationLocks.Add(BranchLock(repository.Id, busy.BranchId, "busy-task"));
+        await context.SaveChangesAsync();
+
+        var result = await CreateService(context).EnqueueFullGenerationAsync(repository.Id, idle.BranchId);
+
+        Assert.True(result.Success);
+        Assert.Equal(idle.BranchId, result.Task!.BranchId);
+    }
+
+    [Fact]
+    public async Task EnqueueFullGenerationAsync_ForTwoBranches_CreatesTwoTasksWithTheirOwnBranchLocks()
+    {
+        using var context = CreateContext();
+        var repository = SeedRepository(context, RepositoryStatus.Completed);
+        var first = SeedBranchWithDocument(context, repository.Id, "first");
+        var second = SeedBranchWithDocument(context, repository.Id, "second");
+        await context.SaveChangesAsync();
+        var service = CreateService(context);
+
+        var firstResult = await service.EnqueueFullGenerationAsync(repository.Id, first.BranchId);
+        var secondResult = await service.EnqueueFullGenerationAsync(repository.Id, second.BranchId);
+
+        Assert.True(firstResult.Success);
+        Assert.True(secondResult.Success);
+        var locks = await context.RepositoryGenerationLocks.ToListAsync();
+        Assert.Equal(
+            new[] { first.BranchId, second.BranchId }.Order(),
+            locks.Select(item => item.BranchId!).Order());
+        Assert.All(locks, item => Assert.Equal(RepositoryGenerationLockScope.Branch, item.Scope));
+    }
+
+    [Fact]
+    public async Task EnqueueFullGenerationAsync_TwiceForOneBranch_KeepsOneActiveTask()
+    {
+        using var context = CreateContext();
+        var repository = SeedRepository(context, RepositoryStatus.Completed);
+        var branch = SeedBranchWithDocument(context, repository.Id, "main");
+        await context.SaveChangesAsync();
+        var service = CreateService(context);
+
+        var first = await service.EnqueueFullGenerationAsync(repository.Id, branch.BranchId);
+        var second = await service.EnqueueFullGenerationAsync(repository.Id, branch.BranchId);
+
+        Assert.True(first.Success);
+        Assert.False(second.Success);
+        Assert.Equal("BRANCH_GENERATION_ACTIVE", second.ErrorCode);
+        Assert.Equal(first.Task!.Id, second.Task!.Id);
+        Assert.Single(await context.BranchGenerationTasks.ToListAsync());
+    }
+
+    [Fact]
+    public async Task EnqueueFullGenerationAsync_WhenBranchBelongsToAnotherRepository_ReturnsNotFoundAndCreatesNothing()
+    {
+        using var context = CreateContext();
+        var repository = SeedRepository(context, RepositoryStatus.Completed);
+        var other = SeedRepository(context, RepositoryStatus.Completed);
+        var foreignBranch = SeedBranchWithDocument(context, other.Id, "main");
+        await context.SaveChangesAsync();
+
+        var result = await CreateService(context).EnqueueFullGenerationAsync(repository.Id, foreignBranch.BranchId);
+
+        Assert.False(result.Success);
+        Assert.Equal("BRANCH_NOT_FOUND", result.ErrorCode);
+        Assert.Empty(await context.BranchGenerationTasks.ToListAsync());
+        Assert.Empty(await context.RepositoryGenerationLocks.ToListAsync());
+    }
+
+    [Fact]
+    public async Task EnqueueFullGenerationAsync_RecordsTheRequestingUser()
+    {
+        using var context = CreateContext();
+        var repository = SeedRepository(context, RepositoryStatus.Completed);
+        var branch = SeedBranchWithDocument(context, repository.Id, "main");
+        await context.SaveChangesAsync();
+
+        var result = await CreateService(context).EnqueueFullGenerationAsync(repository.Id, branch.BranchId, "user-9");
+
+        Assert.Equal("user-9", result.Task!.RequestedBy);
+    }
+
+    [Fact]
+    public async Task CancelAsync_ReleasesOnlyTheLockOfThatBranch()
+    {
+        using var context = CreateContext();
+        var repository = SeedRepository(context, RepositoryStatus.Completed);
+        var first = SeedBranchWithDocument(context, repository.Id, "first");
+        var second = SeedBranchWithDocument(context, repository.Id, "second");
+        await context.SaveChangesAsync();
+        var service = CreateService(context);
+        var firstResult = await service.EnqueueFullGenerationAsync(repository.Id, first.BranchId);
+        await service.EnqueueFullGenerationAsync(repository.Id, second.BranchId);
+
+        var cancelled = await service.CancelAsync(firstResult.Task!.Id);
+
+        Assert.True(cancelled.Success);
+        Assert.Equal(second.BranchId, (await context.RepositoryGenerationLocks.SingleAsync()).BranchId);
+    }
+
+    [Fact]
+    public async Task RetryAsync_ReservesTheLockOfItsOwnBranch()
+    {
+        using var context = CreateContext();
+        var repository = SeedRepository(context, RepositoryStatus.Completed);
+        var failed = SeedBranchWithDocument(context, repository.Id, "failed");
+        var running = SeedBranchWithDocument(context, repository.Id, "running");
+        context.BranchGenerationTasks.Add(new BranchGenerationTask
+        {
+            Id = "failed-task",
+            RepositoryId = repository.Id,
+            BranchId = failed.BranchId,
+            Status = BranchGenerationTaskStatus.Failed,
+            Mode = BranchGenerationTaskMode.Full
+        });
+        context.RepositoryGenerationLocks.Add(BranchLock(repository.Id, running.BranchId, "running-task"));
+        await context.SaveChangesAsync();
+
+        var result = await CreateService(context).RetryAsync("failed-task");
+
+        Assert.True(result.Success);
+        var locks = await context.RepositoryGenerationLocks.ToListAsync();
+        Assert.Contains(locks, item => item.OwnerId == "failed-task" && item.BranchId == failed.BranchId);
+        Assert.Contains(locks, item => item.OwnerId == "running-task" && item.BranchId == running.BranchId);
+    }
+
+    [Fact]
+    public async Task AuthorizeBranchOperationAsync_WhenAnonymous_ReturnsUnauthorized()
     {
         using var context = CreateContext();
         var repository = SeedRepository(context, RepositoryStatus.Completed);
         await context.SaveChangesAsync();
 
-        var result = await BranchGenerationEndpoints.AuthorizeRepositoryMutationAsync(
+        var result = await BranchGenerationEndpoints.AuthorizeBranchOperationAsync(
             context,
             new TestUserContext(null, isAuthenticated: false),
             repository.Id,
@@ -135,46 +274,38 @@ public class BranchGenerationTaskServiceTests
     }
 
     [Fact]
-    public async Task AuthorizeRepositoryMutationAsync_WhenNonOwner_ReturnsForbidden()
+    public async Task AuthorizeBranchOperationAsync_WhenAuthenticatedNonOwner_IsAllowed()
     {
         using var context = CreateContext();
         var repository = SeedRepository(context, RepositoryStatus.Completed);
         await context.SaveChangesAsync();
 
-        var result = await BranchGenerationEndpoints.AuthorizeRepositoryMutationAsync(
+        var result = await BranchGenerationEndpoints.AuthorizeBranchOperationAsync(
             context,
             new TestUserContext("user-2"),
             repository.Id,
             CancellationToken.None);
 
-        Assert.NotNull(result);
-        Assert.Equal(StatusCodes.Status403Forbidden, await ExecuteStatusCodeAsync(result));
+        Assert.Null(result);
     }
 
     [Fact]
-    public async Task AuthorizeRepositoryMutationAsync_WhenOwnerOrAdmin_ReturnsNull()
+    public async Task AuthorizeBranchOperationAsync_WhenRepositoryIsMissing_ReturnsNotFound()
     {
         using var context = CreateContext();
-        var repository = SeedRepository(context, RepositoryStatus.Completed);
-        await context.SaveChangesAsync();
 
-        var ownerResult = await BranchGenerationEndpoints.AuthorizeRepositoryMutationAsync(
+        var result = await BranchGenerationEndpoints.AuthorizeBranchOperationAsync(
             context,
-            new TestUserContext(repository.OwnerUserId),
-            repository.Id,
-            CancellationToken.None);
-        var adminResult = await BranchGenerationEndpoints.AuthorizeRepositoryMutationAsync(
-            context,
-            new TestUserContext("admin-user", isAdmin: true),
-            repository.Id,
+            new TestUserContext("user-2"),
+            "missing",
             CancellationToken.None);
 
-        Assert.Null(ownerResult);
-        Assert.Null(adminResult);
+        Assert.NotNull(result);
+        Assert.Equal(StatusCodes.Status404NotFound, await ExecuteStatusCodeAsync(result));
     }
 
     [Fact]
-    public async Task AuthorizeTaskMutationAsync_UsesRepositoryOwnerPolicy()
+    public async Task AuthorizeBranchTaskOperationAsync_AllowsAnyAuthenticatedUserAndRejectsAnonymous()
     {
         using var context = CreateContext();
         var repository = SeedRepository(context, RepositoryStatus.Completed);
@@ -189,21 +320,29 @@ public class BranchGenerationTaskServiceTests
         });
         await context.SaveChangesAsync();
 
-        var forbiddenResult = await BranchGenerationEndpoints.AuthorizeTaskMutationAsync(
-            context,
-            new TestUserContext("user-2"),
-            "task-1",
-            CancellationToken.None);
-        var ownerResult = await BranchGenerationEndpoints.AuthorizeTaskMutationAsync(
-            context,
-            new TestUserContext(repository.OwnerUserId),
-            "task-1",
-            CancellationToken.None);
+        var anonymous = await BranchGenerationEndpoints.AuthorizeBranchTaskOperationAsync(
+            context, new TestUserContext(null, isAuthenticated: false), "task-1", CancellationToken.None);
+        var nonOwner = await BranchGenerationEndpoints.AuthorizeBranchTaskOperationAsync(
+            context, new TestUserContext("user-2"), "task-1", CancellationToken.None);
+        var missing = await BranchGenerationEndpoints.AuthorizeBranchTaskOperationAsync(
+            context, new TestUserContext("user-2"), "missing", CancellationToken.None);
 
-        Assert.NotNull(forbiddenResult);
-        Assert.Equal(StatusCodes.Status403Forbidden, await ExecuteStatusCodeAsync(forbiddenResult));
-        Assert.Null(ownerResult);
+        Assert.NotNull(anonymous);
+        Assert.Equal(StatusCodes.Status401Unauthorized, await ExecuteStatusCodeAsync(anonymous));
+        Assert.Null(nonOwner);
+        Assert.NotNull(missing);
+        Assert.Equal(StatusCodes.Status404NotFound, await ExecuteStatusCodeAsync(missing));
     }
+
+    private static RepositoryGenerationLock BranchLock(string repositoryId, string branchId, string ownerId) => new()
+    {
+        Id = Guid.NewGuid().ToString(),
+        RepositoryId = repositoryId,
+        BranchId = branchId,
+        OwnerType = RepositoryGenerationLockOwnerType.BranchTask,
+        OwnerId = ownerId,
+        Scope = RepositoryGenerationLockScope.Branch
+    };
 
     private static BranchGenerationTaskService CreateService(TestDbContext context)
     {

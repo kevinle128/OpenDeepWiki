@@ -45,26 +45,29 @@ export default function AdminApiKeysPage() {
   const t = useTranslations();
   const locale = useLocale();
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const [keys, userResult] = await Promise.all([
+  const loadData = useCallback(() => {
+    return Promise.all([
         getApiKeys(),
         getUsers(1, 100),
-      ]);
+      ]).then(([keys, userResult]) => {
       setApiKeys(keys);
       setUsers(userResult.items);
-    } catch (error) {
+    }).catch(error => {
       console.error("Failed to fetch API keys:", error);
       toast.error(t("admin.apiKeys.fetchFailed"));
-    } finally {
+    }).finally(() => {
       setLoading(false);
-    }
+    });
   }, [t]);
 
+  const fetchData = useCallback(() => {
+    setLoading(true);
+    return loadData();
+  }, [loadData]);
+
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    void loadData();
+  }, [loadData]);
 
   const handleCreate = async () => {
     if (!formData.name.trim()) {
@@ -87,8 +90,8 @@ export default function AdminApiKeysPage() {
       setShowKeyDialog(true);
       setCopied(false);
       fetchData();
-    } catch (error: any) {
-      toast.error(error.message || t("admin.apiKeys.createFailed"));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("admin.apiKeys.createFailed"));
     }
   };
 
@@ -108,8 +111,8 @@ export default function AdminApiKeysPage() {
       toast.success(t("admin.apiKeys.revoked"));
       setDeleteId(null);
       fetchData();
-    } catch (error: any) {
-      toast.error(error.message || t("admin.apiKeys.revokeFailed"));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("admin.apiKeys.revokeFailed"));
     }
   };
 

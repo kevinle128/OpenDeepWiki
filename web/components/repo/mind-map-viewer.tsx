@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo, useSyncExternalStore } from "react";
 import { Download, ZoomIn, ZoomOut, RotateCcw, List, Network } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useTranslations } from "@/hooks/use-translations";
@@ -12,6 +12,8 @@ interface MindMapViewerProps {
   branch?: string;
   gitUrl?: string;
 }
+
+const subscribe = () => () => {};
 
 type ViewMode = "mindmap" | "list";
 
@@ -258,8 +260,6 @@ function calculateLayout(
     (sum, n) => sum + getSubtreeHeight(n) + NODE_GAP_V * 2,
     0
   );
-  const maxHeight = Math.max(leftHeight, rightHeight, CENTER_HEIGHT);
-
   // 定位中心节点
   centerNode.x = 0;
   centerNode.y = 0;
@@ -329,8 +329,7 @@ function calculateLayout(
  */
 function drawMindMap(
   ctx: CanvasRenderingContext2D,
-  root: LayoutNode,
-  isDark: boolean
+  root: LayoutNode
 ) {
   // 绘制连接线 - 从父节点到子节点
   const drawConnections = (parent: LayoutNode) => {
@@ -471,7 +470,7 @@ export function MindMapViewer({ content, owner, repo, branch = "main", gitUrl }:
   const [viewMode, setViewMode] = useState<ViewMode>("mindmap");
   const [scale, setScale] = useState(1);
   const [baseScale, setBaseScale] = useState(1);
-  const [mounted, setMounted] = useState(false);
+  const mounted = useSyncExternalStore(subscribe, () => true, () => false);
   const { resolvedTheme } = useTheme();
   const t = useTranslations();
 
@@ -479,10 +478,6 @@ export function MindMapViewer({ content, owner, repo, branch = "main", gitUrl }:
   const repoName = `${owner}/${repo}`;
   const treeNodes = useMemo(() => parseMindMapContent(content), [content]);
   const isDark = resolvedTheme === "dark";
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
 
   // 鼠标滚轮缩放
   useEffect(() => {
@@ -513,13 +508,12 @@ export function MindMapViewer({ content, owner, repo, branch = "main", gitUrl }:
     const { root, width, height } = calculateLayout(treeNodes, repoName, isDark);
     
     // 计算自适应缩放
-    const containerWidth = container.clientWidth - 32;
-    const containerHeight = Math.min(window.innerHeight * 0.65, 550);
-    const scaleX = containerWidth / width;
-    const scaleY = containerHeight / height;
-    const fitScale = Math.min(scaleX, scaleY, 1);
-    
-    setBaseScale(fitScale);
+    const observer = new ResizeObserver(() => {
+      const containerWidth = container.clientWidth - 32;
+      const containerHeight = Math.min(window.innerHeight * 0.65, 550);
+      setBaseScale(Math.min(containerWidth / width, containerHeight / height, 1));
+    });
+    observer.observe(container);
 
     // 设置高清画布
     const dpr = window.devicePixelRatio || 1;
@@ -535,7 +529,8 @@ export function MindMapViewer({ content, owner, repo, branch = "main", gitUrl }:
     ctx.fillRect(0, 0, width, height);
 
     // 绘制思维导图
-    drawMindMap(ctx, root, isDark);
+    drawMindMap(ctx, root);
+    return () => observer.disconnect();
   }, [mounted, viewMode, treeNodes, repoName, isDark]);
 
   const actualScale = baseScale * scale;

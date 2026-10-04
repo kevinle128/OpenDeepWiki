@@ -76,6 +76,9 @@ export interface RepositorySubmitRequest {
   gitUrl: string;
   repoName: string;
   orgName: string;
+  /** Shared Git connection used to clone a private repository. */
+  gitConnectionId?: string;
+  /** Rejected by the backend. Kept so existing callers still compile; the form never sets them. */
   authAccount?: string;
   authPassword?: string;
   branchName: string;
@@ -117,6 +120,8 @@ export interface RepositoryItemResponse {
   isPublic: boolean;
   generateSkill: boolean;
   hasPassword: boolean;  // 新增：是否设置了密码，用于判断是否可设为私有
+  hasGitConnection?: boolean;
+  gitConnectionId?: string | null;
   createdAt: string;
   updatedAt?: string;
   starCount?: number;

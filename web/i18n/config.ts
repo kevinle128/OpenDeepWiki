@@ -56,6 +56,7 @@ export const wikiLanguageCodes = [
   "pl",
   "ru",
   "ar",
+  "vi",
 ] as const;
 
 export type WikiLanguageCode = (typeof wikiLanguageCodes)[number];
@@ -64,9 +65,9 @@ export const defaultWikiLanguage: WikiLanguageCode = "en";
 
 /**
  * Default auto-translation target list. Keep in sync with
- * `WikiGeneratorOptions.DefaultLanguages` on the backend.
+ * `WikiLanguageNames.DefaultLanguages` on the backend.
  */
-export const defaultWikiLanguages = wikiLanguageCodes.join(",");
+export const defaultWikiLanguages = "en,vi";
 
 /**
  * Map a UI locale to a supported wiki language code.

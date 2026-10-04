@@ -19,7 +19,7 @@ export const MAX_IMAGE_SIZE = 10 * 1024 * 1024
  */
 export function validateImageFile(
   file: File,
-  t?: (key: string, values?: Record<string, any>) => string
+  t?: (key: string) => string
 ): { valid: boolean; error?: string } {
   // 检查文件类型
   if (!SUPPORTED_IMAGE_TYPES.includes(file.type as typeof SUPPORTED_IMAGE_TYPES[number])) {

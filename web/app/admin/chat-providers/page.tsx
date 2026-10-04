@@ -144,22 +144,25 @@ export default function AdminChatProvidersPage() {
     return PLATFORM_FIELDS[formData.platform] || [];
   }, [formData.platform]);
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const result = await getChatProviderConfigs();
+  const loadData = useCallback(() => {
+    return getChatProviderConfigs().then((result) => {
       setConfigs(Array.isArray(result) ? result : []);
-    } catch (error) {
+    }).catch(error => {
       console.error("Failed to fetch chat provider configs:", error);
       toast.error(t("admin.toast.fetchConfigFailed"));
-    } finally {
+    }).finally(() => {
       setLoading(false);
-    }
+    });
   }, [t]);
 
+  const fetchData = useCallback(() => {
+    setLoading(true);
+    return loadData();
+  }, [loadData]);
+
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    void loadData();
+  }, [loadData]);
 
   const resetForm = (platform?: string) => {
     const targetPlatform = platform || "feishu";
@@ -230,7 +233,7 @@ export default function AdminChatProvidersPage() {
       });
       setFieldValues(nextFieldValues);
       setShowDialog(true);
-    } catch (error) {
+    } catch {
       toast.error(t("admin.toast.fetchDetailFailed"));
     }
   };
@@ -268,7 +271,7 @@ export default function AdminChatProvidersPage() {
       toast.success(t("admin.toast.configSaveSuccess"));
       setShowDialog(false);
       fetchData();
-    } catch (error) {
+    } catch {
       toast.error(t("admin.toast.configSaveFailed"));
     } finally {
       setSaving(false);
@@ -282,7 +285,7 @@ export default function AdminChatProvidersPage() {
       toast.success(t("admin.toast.deleteSuccess"));
       setDeletePlatform(null);
       fetchData();
-    } catch (error) {
+    } catch {
       toast.error(t("admin.toast.deleteFailed"));
     }
   };
@@ -297,7 +300,7 @@ export default function AdminChatProvidersPage() {
         toast.success(t("admin.chatProviders.enabled"));
       }
       fetchData();
-    } catch (error) {
+    } catch {
       toast.error(t("admin.toast.operationFailed"));
     }
   };
@@ -306,7 +309,7 @@ export default function AdminChatProvidersPage() {
     try {
       await reloadChatProviderConfig(config.platform);
       toast.success(t("admin.toast.refreshSuccess"));
-    } catch (error) {
+    } catch {
       toast.error(t("admin.toast.refreshFailed"));
     }
   };

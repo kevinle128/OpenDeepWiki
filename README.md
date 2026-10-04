@@ -14,6 +14,7 @@ Enterprise support and pricing: [docs.opendeep.wiki/pricing](https://docs.opende
 ## What OpenDeepWiki Ships Today
 
 - Import repository sources from Git URLs, uploaded ZIP archives, or approved local directories.
+- Connect a GitHub or GitLab account once with a personal access token (a shared Git connection), browse its repositories in the `/repositories` workspace, and index several branches of a repository at the same time. Tokens are encrypted with ASP.NET Core Data Protection and never returned by the API.
 - Generate README summaries, project overviews, wiki catalogs, document content, multi-language translations, mind maps, and optional Graphify artifacts.
 - Publish public repository docs on SEO-friendly routes such as `/{owner}/{repo}`, `/{owner}/{repo}/mindmap`, and `/{owner}/{repo}/graphify`.
 - Expose repository knowledge through repository-scoped MCP endpoints, the built-in chat assistant, embedded chat APIs, and share links.
@@ -47,16 +48,21 @@ git clone https://github.com/AIDotNet/OpenDeepWiki.git
 cd OpenDeepWiki
 ```
 
-### 2. Edit `compose.yaml`
+### 2. Create `.env` and edit `compose.yaml`
 
-At minimum, set a real JWT secret and your AI credentials:
+Both compose files refuse to start without `JWT_SECRET_KEY`. It must be a random value of at least 32 bytes, and the application does not start in Production with a shorter value or the built-in default. Put it in `.env` (copy `.env.example`):
+
+```bash
+cp .env.example .env
+# set JWT_SECRET_KEY to the output of: openssl rand -hex 32
+```
+
+Then set your AI credentials in `compose.yaml`:
 
 ```yaml
 services:
   opendeepwiki:
     environment:
-      - JWT_SECRET_KEY=replace-this-in-production
-
       - CHAT_API_KEY=your-chat-api-key
       - ENDPOINT=https://api.openai.com/v1
       - CHAT_REQUEST_TYPE=OpenAI
@@ -71,7 +77,7 @@ services:
       - WIKI_CONTENT_API_KEY=your-content-api-key
       - WIKI_CONTENT_REQUEST_TYPE=OpenAI
 
-      - WIKI_LANGUAGES=en,zh,zh-tw,ja,ko,es,fr,de,pt-br,pl,ru,ar
+      - WIKI_LANGUAGES=en,vi
       - WIKI_PARALLEL_COUNT=5
 ```
 
@@ -80,6 +86,8 @@ Notes:
 - `CHAT_*`, `WIKI_CATALOG_*`, and `WIKI_CONTENT_*` can point to the same provider.
 - Translation is optional. If `WIKI_TRANSLATION_*` is not set, translation falls back to the content-generation provider/model.
 - `compose.yaml` uses `Database__Type=sqlite` and `ConnectionStrings__Default=Data Source=/data/opendeepwiki.db` by default.
+- Both compose files set `DataProtection__KeyRingPath=/data/dataprotection-keys`. This key ring decrypts the saved Git connection tokens. Keep `./data` on a persistent volume and back up the database and the key ring together. If the key ring is lost, every saved token must be entered again.
+- The first start after this upgrade signs every user out once, because `JWT_SECRET_KEY` is now used. Repositories that still hold old plaintext Git passwords are handled by the [legacy credential migration runbook](docs/content/docs/deployment/legacy-credential-migration.mdx).
 
 ### 3. Start the stack
 
@@ -96,15 +104,15 @@ make up
 
 ### 4. Open the app
 
-- Web UI: [http://localhost:3000](http://localhost:3000)
-- Backend health: [http://localhost:8080/health](http://localhost:8080/health)
+- `compose.yaml` (SQLite): web UI [http://localhost:8090](http://localhost:8090), backend health [http://localhost:18081/health](http://localhost:18081/health)
+- `compose.pgsql.yaml` (PostgreSQL): web UI [http://localhost:3000](http://localhost:3000), backend health [http://localhost:8080/health](http://localhost:8080/health)
 
 On a fresh database, the seeded admin account is:
 
 - Email: `admin@routin.ai`
 - Password: `Admin@123`
 
-Change the default JWT secret and admin password before any real deployment.
+Change the default admin password before any real deployment.
 
 ## PostgreSQL Instead Of SQLite
 
@@ -170,8 +178,19 @@ npm run dev
 ```bash
 dotnet test tests/OpenDeepWiki.Tests/OpenDeepWiki.Tests.csproj
 cd web && npm test
+cd web && node scripts/check-i18n.js
 cd web && npm run lint
 ```
+
+End-to-end tests of the shared repository workspace use Playwright with Chromium only. They start the web app on port `4310` and a test host of the backend on port `4311` (temporary SQLite database and a fake Git provider, no real provider calls):
+
+```bash
+cd web
+npx playwright install chromium
+npm run test:e2e
+```
+
+PostgreSQL tests run when `OPENDEEPWIKI_TEST_POSTGRES` points to a disposable server, for example `Host=127.0.0.1;Port=55440;Username=postgres;Password=...;Database=postgres`. See [local development](docs/content/docs/getting-started/local-development.mdx).
 
 Common Makefile shortcuts:
 

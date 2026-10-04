@@ -14,6 +14,7 @@ OpenDeepWiki 可以把 Git 仓库、ZIP 压缩包和本地目录转换成可检�
 ## 当前版本能做什么
 
 - 从 Git URL、上传 ZIP 压缩包或受允许的本地目录导入仓库。
+- 用个人访问令牌一次性连接 GitHub 或 GitLab 账号（共享 Git 连接），在 `/repositories` 工作区浏览其仓库，并同时索引同一仓库的多个分支。令牌用 ASP.NET Core Data Protection 加密，API 不会返回令牌。
 - 生成 README 摘要、项目概览、Wiki 目录、文档正文、多语言翻译、思维导图，以及可选的 Graphify 产物。
 - 在 `/{owner}/{repo}`、`/{owner}/{repo}/mindmap`、`/{owner}/{repo}/graphify` 等 SEO 友好路由上发布公共文档。
 - 通过仓库级 MCP、内置聊天助手、嵌入式聊天 API 和分享链接复用仓库知识。
@@ -47,16 +48,21 @@ git clone https://github.com/AIDotNet/OpenDeepWiki.git
 cd OpenDeepWiki
 ```
 
-### 2. 修改 `compose.yaml`
+### 2. 创建 `.env` 并修改 `compose.yaml`
 
-最少需要把 JWT 密钥和 AI 配置改成真实值：
+两个 compose 文件在没有 `JWT_SECRET_KEY` 时都会拒绝启动。它必须是至少 32 字节的随机值；Production 环境下，更短的值或内置默认值会让应用无法启动。把它写进 `.env`（复制 `.env.example`）：
+
+```bash
+cp .env.example .env
+# 把 JWT_SECRET_KEY 设为 openssl rand -hex 32 的输出
+```
+
+然后在 `compose.yaml` 中设置 AI 配置：
 
 ```yaml
 services:
   opendeepwiki:
     environment:
-      - JWT_SECRET_KEY=replace-this-in-production
-
       - CHAT_API_KEY=your-chat-api-key
       - ENDPOINT=https://api.openai.com/v1
       - CHAT_REQUEST_TYPE=OpenAI
@@ -80,6 +86,8 @@ services:
 - `CHAT_*`、`WIKI_CATALOG_*`、`WIKI_CONTENT_*` 可以共用同一个 provider。
 - 翻译配置是可选的；如果没有设置 `WIKI_TRANSLATION_*`，会回退到内容生成的 provider/model。
 - 默认使用 `Database__Type=sqlite` 和 `ConnectionStrings__Default=Data Source=/data/opendeepwiki.db`。
+- 两个 compose 文件都设置了 `DataProtection__KeyRingPath=/data/dataprotection-keys`。这个密钥环用来解密已保存的 Git 连接令牌。请把 `./data` 放在持久卷上，并把数据库和密钥环一起备份；密钥环丢失后，所有已保存的令牌都必须重新输入。
+- 升级后的第一次启动会让所有用户退出登录一次，因为现在使用 `JWT_SECRET_KEY` 签名。仍保存着旧明文 Git 密码的仓库，见[旧凭据迁移手册](docs/content/docs/deployment/legacy-credential-migration.mdx)。
 
 ### 3. 启动服务
 
@@ -96,15 +104,15 @@ make up
 
 ### 4. 访问系统
 
-- Web 界面：[http://localhost:3000](http://localhost:3000)
-- 后端健康检查：[http://localhost:8080/health](http://localhost:8080/health)
+- `compose.yaml`（SQLite）：Web 界面 [http://localhost:8090](http://localhost:8090)，后端健康检查 [http://localhost:18081/health](http://localhost:18081/health)
+- `compose.pgsql.yaml`（PostgreSQL）：Web 界面 [http://localhost:3000](http://localhost:3000)，后端健康检查 [http://localhost:8080/health](http://localhost:8080/health)
 
 全新数据库首次启动后会自动创建管理员账号：
 
 - 邮箱：`admin@routin.ai`
 - 密码：`Admin@123`
 
-正式部署前请务必修改默认 JWT 密钥和管理员密码。
+正式部署前请务必修改默认管理员密码。
 
 ## 使用 PostgreSQL 代替 SQLite
 
@@ -170,8 +178,19 @@ npm run dev
 ```bash
 dotnet test tests/OpenDeepWiki.Tests/OpenDeepWiki.Tests.csproj
 cd web && npm test
+cd web && node scripts/check-i18n.js
 cd web && npm run lint
 ```
+
+共享仓库工作区的端到端测试使用 Playwright，只用 Chromium。它们在 `4310` 端口启动前端，在 `4311` 端口启动后端测试宿主（临时 SQLite 数据库和假的 Git 提供商，不访问真实提供商）：
+
+```bash
+cd web
+npx playwright install chromium
+npm run test:e2e
+```
+
+把 `OPENDEEPWIKI_TEST_POSTGRES` 指向一次性的 PostgreSQL 服务器（例如 `Host=127.0.0.1;Port=55440;Username=postgres;Password=...;Database=postgres`），PostgreSQL 测试才会运行。详见[本地开发](docs/content/docs/getting-started/local-development.mdx)。
 
 常用 Makefile 命令：
 

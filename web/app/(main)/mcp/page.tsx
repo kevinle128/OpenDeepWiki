@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Image from "next/image";
 import { AppLayout } from "@/components/app-layout";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -194,7 +195,7 @@ export default function McpPage() {
                     <div className="flex items-start justify-between gap-4">
                       <div className="flex items-center gap-3">
                         {provider.iconUrl ? (
-                          <img src={provider.iconUrl} alt="" className="h-8 w-8 rounded-lg" />
+                          <Image src={provider.iconUrl} alt="" width={32} height={32} unoptimized className="h-8 w-8 rounded-lg" />
                         ) : (
                           <div className="h-8 w-8 rounded-lg bg-muted flex items-center justify-center">
                             <Globe className="h-4 w-4 text-muted-foreground" />

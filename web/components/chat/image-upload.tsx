@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import Image from "next/image"
 import { useTranslations } from "next-intl"
 import { ImagePlus, X } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -8,10 +9,7 @@ import { Button } from "@/components/ui/button"
 import {
   validateImageFile,
   fileToBase64,
-  validateBase64Image,
-  getMimeTypeFromBase64,
   SUPPORTED_IMAGE_TYPES,
-  MAX_IMAGE_SIZE,
 } from "@/lib/image-validation"
 
 /**
@@ -78,7 +76,7 @@ export function ImageUpload({
       try {
         const base64 = await fileToBase64(file)
         newImages.push(base64)
-      } catch (err) {
+    } catch {
         errors.push(t("image.readFailed"))
       }
     }
@@ -114,7 +112,7 @@ export function ImageUpload({
         <div className="flex flex-wrap gap-2">
           {images.map((img, index) => (
             <div key={index} className="relative group">
-              <img
+              <Image unoptimized width={64} height={64}
                 src={img}
                 alt={t("image.preview", { index: index + 1 })}
                 className="h-16 w-16 rounded-md object-cover border border-border"
@@ -181,4 +179,3 @@ export {
   SUPPORTED_IMAGE_TYPES,
   MAX_IMAGE_SIZE,
 } from "@/lib/image-validation"
-

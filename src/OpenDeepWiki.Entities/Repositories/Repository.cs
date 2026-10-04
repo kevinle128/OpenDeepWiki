@@ -178,8 +178,44 @@ public class Repository : AggregateRoot<string>
     public bool IsDepartmentOwned { get; set; } = false;
 
     /// <summary>
+    /// Shared Git connection that supplies credentials for this repository. Null for public, ZIP, and local sources.
+    /// </summary>
+    [StringLength(36)]
+    public string? GitConnectionId { get; set; }
+
+    /// <summary>
+    /// Git provider of the remote. Null for ZIP, local, and repositories that predate stable remote identity.
+    /// </summary>
+    public GitProvider? Provider { get; set; }
+
+    /// <summary>
+    /// Normalized server URL of the remote. Part of the stable remote identity, together with
+    /// <see cref="Provider"/> and <see cref="ProviderRepositoryId"/>.
+    /// </summary>
+    [StringLength(500)]
+    public string? ProviderBaseUrl { get; set; }
+
+    /// <summary>
+    /// Provider's numeric repository ID. It survives renames and transfers, so it identifies the remote.
+    /// </summary>
+    [StringLength(128)]
+    public string? ProviderRepositoryId { get; set; }
+
+    /// <summary>
+    /// Default branch reported by the provider at the last refresh.
+    /// </summary>
+    [StringLength(200)]
+    public string? DefaultBranch { get; set; }
+
+    /// <summary>
     /// 所属用户导航属性
     /// </summary>
     [ForeignKey("OwnerUserId")]
     public virtual User? Owner { get; set; }
+
+    /// <summary>
+    /// Git connection navigation property.
+    /// </summary>
+    [ForeignKey(nameof(GitConnectionId))]
+    public virtual GitConnection? GitConnection { get; set; }
 }

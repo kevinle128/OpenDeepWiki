@@ -8,6 +8,12 @@
       - "18081:8080"
     restart: unless-stopped
     user: "0:0"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
     environment:
       # ASP.NET Core 环境
       - ASPNETCORE_ENVIRONMENT=Production
@@ -19,12 +25,15 @@
       - Database__Type=${DB_TYPE:-sqlite}
       - ConnectionStrings__Default=${CONNECTION_STRING:-Data Source=/data/opendeepwiki.db}
 
-      # JWT 认证配置 (生产环境请修改)
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-OpenDeepWiki-Default-Secret-Key-Please-Change-In-Production-Environment-2024}
+      # JWT 认证配置 (必填: 至少 32 字节的随机值, Production 环境不接受内置默认值)
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:?Set JWT_SECRET_KEY to a random value of at least 32 bytes}
+
+      # Data Protection 密钥环 (必须持久化: 丢失后所有已保存的 Git 凭据无法解密, 请与数据库一同备份)
+      - DataProtection__KeyRingPath=/data/dataprotection-keys
 
       # 仓库存储目录
       - REPOSITORIES_DIRECTORY=/data
-      - RepositoryAnalyzer__AllowedLocalPathRoots__0=${LOCAL_IMPORT_ROOT:-/host/home/zhangruibo}
+      - RepositoryAnalyzer__AllowedLocalPathRoots__0=/host/local-import
 
       # AI 服务配置 (全局默认，用于 Chat 等功能)
       - CHAT_API_KEY=${CHAT_API_KEY:-your-chat-api-key}
@@ -73,11 +82,10 @@
       - WIKI_MAX_CONCURRENT_GENERATIONS=${WIKI_MAX_CONCURRENT_GENERATIONS:-1}
 
       # 多语言支持 (逗号分隔，如: en,zh,ja,ko,es,fr,de,pt-br)
-      - WIKI_LANGUAGES=${WIKI_LANGUAGES:-en,zh,zh-tw,ja,ko,es,fr,de,pt-br,pl,ru,ar}
+      - WIKI_LANGUAGES=${WIKI_LANGUAGES:-en,vi}
     volumes:
       - ./data:/data
-      - /home/zhangruibo:/host/home/zhangruibo:ro
-      - /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro
+      - ${LOCAL_IMPORT_SOURCE:-./data/local-import}:/host/local-import:ro
 
   web:
     image: crpi-j9ha7sxwhatgtvj4.cn-shenzhen.personal.cr.aliyuncs.com/open-deepwiki/opendeepwiki-web
@@ -87,6 +95,9 @@
     ports:
       - "8090:3000"
     restart: unless-stopped
+    depends_on:
+      opendeepwiki:
+        condition: service_healthy
     environment:
       - NODE_ENV=production
       - SITE_URL=${SITE_URL:-http://localhost:8090}

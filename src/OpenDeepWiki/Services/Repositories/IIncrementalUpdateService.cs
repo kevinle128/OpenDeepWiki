@@ -36,11 +36,41 @@ public interface IIncrementalUpdateService
     /// <param name="repositoryId">仓库ID</param>
     /// <param name="branchId">分支ID</param>
     /// <param name="cancellationToken">取消令牌</param>
+    /// <param name="requestedBy">Authenticated user who asked for the update.</param>
     /// <returns>创建的任务ID</returns>
+    /// <exception cref="IncrementalUpdateRejectedException">
+    /// The repository or branch does not exist, the branch does not belong to the repository,
+    /// or a full generation of the branch is active.
+    /// </exception>
     Task<string> TriggerManualUpdateAsync(
         string repositoryId,
         string branchId,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        string? requestedBy = null);
+}
+
+/// <summary>
+/// Stable codes of rejected incremental update requests.
+/// </summary>
+public static class IncrementalUpdateErrorCodes
+{
+    public const string RepositoryNotFound = "REPOSITORY_NOT_FOUND";
+    public const string BranchNotFound = "BRANCH_NOT_FOUND";
+    public const string BranchGenerationActive = "BRANCH_GENERATION_ACTIVE";
+}
+
+/// <summary>
+/// An incremental update request was refused before any task was created.
+/// </summary>
+public sealed class IncrementalUpdateRejectedException : Exception
+{
+    public IncrementalUpdateRejectedException(string errorCode)
+        : base($"Incremental update request rejected: {errorCode}.")
+    {
+        ErrorCode = errorCode;
+    }
+
+    public string ErrorCode { get; }
 }
 
 /// <summary>
@@ -82,6 +112,12 @@ public class IncrementalUpdateResult
     /// 处理耗时
     /// </summary>
     public TimeSpan Duration { get; set; }
+
+    /// <summary>
+    /// True when the diff removed or renamed source files. The wiki updater only receives paths that still exist,
+    /// so it cannot drop stale documents. The branch baseline stays unchanged and the branch needs a full generation.
+    /// </summary>
+    public bool RequiresFullGeneration { get; set; }
 }
 
 /// <summary>

@@ -262,32 +262,30 @@ export default function AdminSettingsPage() {
     [t]
   );
 
-  const fetchData = useCallback(
-    async ({ showLoader = true }: { showLoader?: boolean } = {}) => {
-      if (showLoader) {
-        setLoading(true);
-      }
-
-      try {
-        const settingsResult = await getSettings();
+  const loadData = useCallback(
+    () => {
+      return getSettings().then(settingsResult => {
         const result = settingsResult.filter((setting) => !HIDDEN_AI_SETTING_KEYS.has(setting.key));
         setSettings(result);
         setEditedValues(createEditedValues(result));
-      } catch (error) {
+      }).catch(error => {
         console.error("Failed to fetch settings:", error);
         toast.error(t("admin.toast.fetchSettingsFailed"));
-      } finally {
-        if (showLoader) {
-          setLoading(false);
-        }
-      }
+      }).finally(() => {
+        setLoading(false);
+      });
     },
     [t]
   );
 
+  const fetchData = useCallback(({ showLoader = true }: { showLoader?: boolean } = {}) => {
+    if (showLoader) setLoading(true);
+    return loadData();
+  }, [loadData]);
+
   useEffect(() => {
-    void fetchData();
-  }, [fetchData]);
+    void loadData();
+  }, [loadData]);
 
   const handleFieldChange = useCallback((key: string, value: string) => {
     setEditedValues((prev) => ({
@@ -396,12 +394,9 @@ export default function AdminSettingsPage() {
     }, {});
   }, [categories, resolveAiGroupId, visibleSettingsByCategory]);
 
-  useEffect(() => {
-    if (categories.length === 0) return;
-    if (!categories.includes(activeCategory)) {
-      setActiveCategory(categories[0] ?? "general");
-    }
-  }, [activeCategory, categories]);
+  if (categories.length > 0 && !categories.includes(activeCategory)) {
+    setActiveCategory(categories[0] ?? "general");
+  }
 
   const pendingChangeCount = settings.reduce((count, setting) => {
     return count + (editedValues[setting.key] !== (setting.value ?? "") ? 1 : 0);

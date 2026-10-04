@@ -227,31 +227,43 @@ export function RepositoryList({ ownerId, refreshTrigger }: RepositoryListProps)
   const [viewMode, setViewMode] = useState<"tree" | "list">("tree");
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
+  const [previousOwnerAndView, setPreviousOwnerAndView] = useState({ ownerId, viewMode });
+  if (previousOwnerAndView.ownerId !== ownerId || previousOwnerAndView.viewMode !== viewMode) {
+    setPreviousOwnerAndView({ ownerId, viewMode });
+    setPage(1);
+  }
+  const [previousRequest, setPreviousRequest] = useState({ ownerId, viewMode, page, refreshTrigger });
+  if (previousRequest.ownerId !== ownerId || previousRequest.viewMode !== viewMode || previousRequest.page !== page || previousRequest.refreshTrigger !== refreshTrigger) {
+    setPreviousRequest({ ownerId, viewMode, page, refreshTrigger });
+    setIsLoading(true);
+    setError(null);
+  }
 
   const isTreeView = viewMode === "tree";
   const totalPages = isTreeView ? 1 : Math.ceil(total / PAGE_SIZE);
 
-  const loadRepositories = useCallback(async () => {
-    try {
-      setIsLoading(true);
-      setError(null);
-      const params = { ownerId };
-      const response = isTreeView
-        ? await fetchAllRepositoryList(params)
-        : await fetchRepositoryList({
-            ...params,
-            page,
-            pageSize: PAGE_SIZE,
-          });
+  const loadRepositories = useCallback(() => {
+    const params = { ownerId };
+    const request = isTreeView
+      ? fetchAllRepositoryList(params)
+      : fetchRepositoryList({ ...params, page, pageSize: PAGE_SIZE });
+    return request.then((response) => {
       setRepositories(response.items);
       setTotal(response.total);
-    } catch (err) {
+      setError(null);
+    }).catch((err: unknown) => {
       setError("Failed to load repositories");
       console.error("Failed to fetch repositories:", err);
-    } finally {
+    }).finally(() => {
       setIsLoading(false);
-    }
+    });
   }, [isTreeView, ownerId, page]);
+
+  const handleRefresh = () => {
+    setIsLoading(true);
+    setError(null);
+    void loadRepositories();
+  };
 
   // 处理可见性变化，更新本地状态
   const handleVisibilityChange = useCallback((repoId: string, newIsPublic: boolean) => {
@@ -276,6 +288,8 @@ export function RepositoryList({ ownerId, refreshTrigger }: RepositoryListProps)
           item.id === repo.id ? { ...item, statusName: "Pending" } : item
         )
       );
+      setIsLoading(true);
+      setError(null);
       void loadRepositories();
     } catch (err) {
       console.error("Failed to regenerate repository:", err);
@@ -289,10 +303,6 @@ export function RepositoryList({ ownerId, refreshTrigger }: RepositoryListProps)
     loadRepositories();
   }, [loadRepositories, refreshTrigger]);
 
-  useEffect(() => {
-    setPage(1);
-  }, [ownerId, viewMode]);
-
   // Auto-refresh for pending/processing repositories
   useEffect(() => {
     const hasPendingOrProcessing = repositories.some(
@@ -300,7 +310,11 @@ export function RepositoryList({ ownerId, refreshTrigger }: RepositoryListProps)
     );
 
     if (hasPendingOrProcessing) {
-      const interval = setInterval(loadRepositories, 10000); // Refresh every 10 seconds
+      const interval = setInterval(() => {
+        setIsLoading(true);
+        setError(null);
+        void loadRepositories();
+      }, 10000); // Refresh every 10 seconds
       return () => clearInterval(interval);
     }
   }, [repositories, loadRepositories]);
@@ -331,7 +345,7 @@ export function RepositoryList({ ownerId, refreshTrigger }: RepositoryListProps)
             <Button
               variant="outline"
               className="mt-4"
-              onClick={loadRepositories}
+              onClick={handleRefresh}
             >
               <RefreshCw className="mr-2 h-4 w-4" />
               {t("home.repository.retry")}
@@ -401,7 +415,7 @@ export function RepositoryList({ ownerId, refreshTrigger }: RepositoryListProps)
               variant="ghost"
               size="icon"
               className="shrink-0"
-              onClick={loadRepositories}
+              onClick={handleRefresh}
               disabled={isLoading}
             >
               <RefreshCw

@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenDeepWiki · 分支管理</title>
+  <style>
+    :root { --ink:#17212b; --muted:#66717d; --line:#e3e8e8; --soft:#f5f7f7; --teal:#087f78; --teal-dark:#066b66; --teal-soft:#eaf8f5; --amber:#9a5b12; --amber-soft:#fff7e8; --red:#b5473f; --shadow:0 16px 42px rgba(26,50,48,.09); }
+    * { box-sizing:border-box; }
+    body { margin:0; color:var(--ink); background:#f3f6f5; font:14px/1.5 ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+    button,input { font:inherit; }
+    button { cursor:pointer; }
+    .app { min-height:100vh; display:grid; grid-template-columns:218px 1fr; }
+    aside { background:#fff; border-right:1px solid var(--line); padding:26px 18px; display:flex; flex-direction:column; gap:28px; }
+    .brand { display:flex; align-items:center; gap:10px; padding:0 8px; font-size:16px; font-weight:750; letter-spacing:-.02em; }
+    .brand-mark { width:30px; height:30px; display:grid; place-items:center; color:white; background:var(--teal); border-radius:9px; font-weight:800; }
+    nav { display:grid; gap:5px; }
+    nav a { display:flex; align-items:center; gap:11px; padding:10px 12px; color:#55616c; text-decoration:none; border-radius:8px; }
+    nav a.active { color:var(--teal-dark); background:var(--teal-soft); font-weight:650; }
+    .nav-icon { width:18px; text-align:center; font-size:16px; }
+    .side-foot { margin-top:auto; padding:14px 10px; border-top:1px solid var(--line); color:var(--muted); font-size:12px; }
+    main { min-width:0; }
+    .topbar { height:70px; padding:0 36px; display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid var(--line); background:rgba(255,255,255,.9); }
+    .breadcrumbs { color:var(--muted); } .breadcrumbs b { color:var(--ink); }
+    .avatar { width:34px;height:34px;border-radius:50%;background:#d7ebe7;color:var(--teal-dark);display:grid;place-items:center;font-weight:750; }
+    .page { width:min(100%,1030px); margin:0 auto; padding:38px 42px 70px; }
+    .preview { display:flex; align-items:center; justify-content:space-between; margin-bottom:30px; }
+    .preview-copy span { display:block; color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.12em; font-weight:700; }
+    .segmented { display:flex; gap:3px; padding:4px; background:#e8edeb; border-radius:10px; }
+    .segmented button { border:0; padding:8px 14px; border-radius:7px; color:#58636d; background:transparent; }
+    .segmented button.active { color:var(--ink); background:#fff; box-shadow:0 2px 7px rgba(20,43,40,.1); font-weight:650; }
+    .steps { display:grid; grid-template-columns:1fr 54px 1fr; align-items:center; margin-bottom:24px; }
+    .step { display:flex; align-items:center; gap:11px; color:var(--muted); }
+    .step:last-child { justify-content:flex-end; }
+    .step-num { width:30px;height:30px;border:1px solid #cfd7d5;border-radius:50%;display:grid;place-items:center;background:#fff;font-weight:700; }
+    .step.active { color:var(--ink); font-weight:650; } .step.active .step-num { color:#fff;background:var(--teal);border-color:var(--teal); }
+    .step.done .step-num { color:var(--teal); background:var(--teal-soft); border-color:#b9ded7; }
+    .connector { height:1px; background:#ced7d4; }
+    .card { background:#fff; border:1px solid var(--line); border-radius:16px; box-shadow:var(--shadow); }
+    .card-head { padding:28px 30px 22px; border-bottom:1px solid var(--line); }
+    h1,h2,h3,p { margin-top:0; } h1 { margin-bottom:8px; font-size:28px; line-height:1.18; letter-spacing:-.035em; } h2 { font-size:20px; letter-spacing:-.02em; }
+    .sub { color:var(--muted); margin:0; }
+    .form { padding:28px 30px 30px; }
+    label { display:block; margin-bottom:8px; font-size:13px; font-weight:650; }
+    .field { margin-bottom:21px; }
+    input[type=text],input[type=password],input[type=search] { width:100%; border:1px solid #ccd5d3; border-radius:9px; padding:11px 12px; color:var(--ink); background:#fff; outline:none; }
+    input:focus { border-color:var(--teal); box-shadow:0 0 0 3px rgba(8,127,120,.12); }
+    .two-col { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+    .hint { margin-top:6px;color:var(--muted);font-size:12px; }
+    .actions { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:10px; }
+    .btn { border:1px solid #cdd5d3; border-radius:9px; padding:10px 15px; color:#34404a; background:#fff; font-weight:650; }
+    .btn:hover { border-color:#aab8b5;background:#fafcfc; } .btn:focus-visible { outline:3px solid rgba(8,127,120,.2);outline-offset:2px; }
+    .btn.primary { color:#fff;background:var(--teal);border-color:var(--teal); } .btn.primary:hover { background:var(--teal-dark); }
+    .btn.danger { color:#fff;background:var(--red);border-color:var(--red); }
+    .btn.ghost { border-color:transparent; background:transparent; }
+    .btn:disabled { opacity:.48;cursor:not-allowed; }
+    .success { display:none; margin:0 30px 28px; padding:17px 18px; border:1px solid #abd9d1; background:var(--teal-soft); border-radius:12px; align-items:center; gap:14px; animation:success-in .55s cubic-bezier(.2,.9,.2,1); }
+    .success.show { display:flex; } .success-icon { width:38px;height:38px;border-radius:50%;display:grid;place-items:center;color:white;background:var(--teal);font-size:20px;animation:pop .6s .2s both; }
+    .success strong { display:block; } .success small { color:#476c67; }
+    @keyframes success-in { from { opacity:0;transform:translateY(10px); } } @keyframes pop { 0%{transform:scale(.5)} 70%{transform:scale(1.12)} 100%{transform:scale(1)} }
+    #step2 { display:none; } #step2.show { display:block; animation:fade-up .35s ease; } @keyframes fade-up { from{opacity:0;transform:translateY(8px)} }
+    .branch-tools { display:flex; gap:12px; padding:20px 30px; align-items:center; border-bottom:1px solid var(--line); }
+    .branch-tools input { flex:1; }
+    .selected-count { white-space:nowrap; color:var(--teal-dark); font-weight:700; }
+    .branches { padding:10px 18px 4px; }
+    .branch-card { display:grid; grid-template-columns:auto 1fr auto; gap:14px; align-items:center; padding:16px 13px; margin:6px 0; border:1px solid transparent; border-radius:11px; cursor:pointer; transition:.15s ease; }
+    .branch-card:hover { background:#f8fbfa; } .branch-card.selected { border-color:#9dd1c8;background:#f2fbf8; }
+    .branch-card input { width:17px;height:17px;accent-color:var(--teal); }
+    .branch-name { display:flex;gap:8px;align-items:center;font-weight:700; } .badge { padding:2px 7px;border-radius:5px;background:#dcefeb;color:var(--teal-dark);font-size:11px;font-weight:700; }
+    .meta { color:var(--muted);font-size:12px;margin-top:4px; } .commit { color:#7c8790;font:12px ui-monospace,SFMono-Regular,Menlo,monospace; }
+    .branch-foot { margin:12px 30px 30px; padding-top:22px; border-top:1px solid var(--line); display:flex; gap:16px; align-items:center; justify-content:space-between; }
+    .info { display:flex;gap:10px;color:#52616b;max-width:540px;font-size:13px; } .info-icon { color:var(--teal);font-weight:800; }
+    .repo-page { display:none; position:relative; } .repo-page.show { display:block; }
+    .repo-title { display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:25px; } .repo-title h1 { font-size:25px; }
+    .repo-stats { display:grid;grid-template-columns:repeat(3,1fr);gap:14px; } .stat { padding:18px;border:1px solid var(--line);background:white;border-radius:12px; } .stat strong { display:block;font-size:20px; }
+    .backdrop { position:fixed; inset:0; background:rgba(24,33,38,.44); display:grid; place-items:center; padding:24px; z-index:5; }
+    .modal { width:min(760px,100%); max-height:calc(100vh - 48px); overflow:auto; background:#fff;border-radius:17px;box-shadow:0 28px 90px rgba(14,31,29,.28); }
+    .modal-head { padding:25px 28px 20px;display:flex;justify-content:space-between;gap:20px;border-bottom:1px solid var(--line); } .modal-head h2 { margin-bottom:5px; }
+    .close { width:34px;height:34px;border:0;background:var(--soft);border-radius:8px;font-size:20px;color:#51606a; }
+    .modal-body { padding:24px 28px; } .section-label { margin:0 0 10px;color:#596670;font-size:12px;text-transform:uppercase;letter-spacing:.1em;font-weight:750; }
+    .edit-row { display:grid;grid-template-columns:1fr auto auto;gap:13px;align-items:center;padding:14px 0;border-bottom:1px solid #edf0ef; } .edit-row:last-child { border-bottom:0; }
+    .row-name { font-weight:700; } .row-sub { color:var(--muted);font-size:12px;margin-top:2px; }
+    .switch { display:flex;align-items:center;gap:8px;color:#52606a;font-size:12px; } .switch input { position:absolute;opacity:0; } .track { width:38px;height:22px;border-radius:12px;background:#c7cfcd;padding:3px;transition:.2s; } .track:after { content:"";display:block;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 3px #687;transition:.2s; } .switch input:checked + .track { background:var(--teal); } .switch input:checked + .track:after { transform:translateX(16px); }
+    .divider { height:1px;background:var(--line);margin:22px 0; }
+    .summary { padding:15px 17px;border:1px solid #cfdad7;border-radius:10px;background:#f8faf9;display:flex;justify-content:space-between;gap:15px;align-items:center; } .delta { display:flex;gap:9px;flex-wrap:wrap; } .delta span { padding:4px 8px;border-radius:5px;font-size:12px;font-weight:650; } .add { color:#08746e;background:#e3f5f1; }.remove { color:var(--amber);background:var(--amber-soft); }
+    .modal-foot { display:flex;justify-content:flex-end;gap:10px;padding:17px 28px;border-top:1px solid var(--line);background:#fbfcfc; }
+    .confirm { display:none;position:fixed;inset:0;z-index:9;background:rgba(21,28,31,.55);place-items:center;padding:22px; }.confirm.show { display:grid; }
+    .confirm-box { width:min(460px,100%);background:white;border-radius:15px;box-shadow:var(--shadow);padding:25px; } .warning { width:42px;height:42px;display:grid;place-items:center;border-radius:50%;background:var(--amber-soft);color:var(--amber);font-size:20px;margin-bottom:16px; }
+    .confirm-box p { color:var(--muted); } .confirm-actions { display:flex;justify-content:flex-end;gap:10px;margin-top:22px; }
+    .toast { position:fixed;right:24px;bottom:24px;z-index:15;background:#173b38;color:#fff;padding:12px 16px;border-radius:10px;box-shadow:var(--shadow);opacity:0;transform:translateY(12px);pointer-events:none;transition:.25s; }.toast.show { opacity:1;transform:none; }
+    @media (max-width:760px) { .app{display:block}.app>aside{display:none}.topbar{padding:0 18px;height:60px}.page{padding:24px 16px 55px}.preview{align-items:flex-start;gap:15px}.steps{grid-template-columns:1fr 25px 1fr}.step{font-size:12px}.step-num{width:27px;height:27px}.card-head,.form{padding:22px 18px}.two-col{grid-template-columns:1fr;gap:0}.form .actions{align-items:stretch;flex-direction:column}.form .actions .btn{width:100%;white-space:nowrap}.branch-tools{padding:16px 18px;align-items:stretch;flex-direction:column}.branches{padding:8px}.branch-card{grid-template-columns:auto 1fr}.commit{grid-column:2}.branch-foot{margin:10px 18px 22px;align-items:stretch;flex-direction:column}.branch-foot .btn{width:100%;white-space:nowrap}.repo-stats{grid-template-columns:1fr}.modal-body,.modal-head{padding:20px 18px}.edit-row{grid-template-columns:1fr auto}.edit-row>.btn{grid-column:1/-1}.summary{align-items:flex-start;flex-direction:column}.modal-foot{padding:15px 18px}.backdrop{padding:8px}.modal{max-height:calc(100vh - 16px)}.confirm-box{padding:20px}.warning{width:36px;height:36px;font-size:17px;margin-bottom:13px}.confirm-actions .btn{flex:1;white-space:nowrap;padding-inline:8px} }
+  </style>
+</head>
+<body>
+<div class="app">
+  <aside><div class="brand"><span class="brand-mark">O</span> OpenDeepWiki</div><nav><a href="#"><span class="nav-icon">⌂</span>概览</a><a class="active" href="#"><span class="nav-icon">⌘</span>仓库</a><a href="#"><span class="nav-icon">⌕</span>搜索</a><a href="#"><span class="nav-icon">⚙</span>设置</a></nav><div class="side-foot">工作区<br><b>Acme Engineering</b></div></aside>
+  <main>
+    <header class="topbar"><div class="breadcrumbs">仓库 / <b id="crumb">新建仓库</b></div><div class="avatar">DL</div></header>
+    <div class="page">
+      <div class="preview"><div class="preview-copy"><span>交互预览</span>分支管理流程</div><div class="segmented" aria-label="预览状态"><button class="active" data-view="create">创建</button><button data-view="edit">后续编辑</button></div></div>
+      <section id="createView">
+        <div class="steps"><div class="step active" id="stepOne"><span class="step-num">1</span><span>连接仓库</span></div><span class="connector"></span><div class="step" id="stepTwo"><span class="step-num">2</span><span>选择分支</span></div></div>
+        <article class="card" id="step1"><div class="card-head"><h1>连接私有仓库</h1><p class="sub">先验证访问权限。连接成功后，你可以选择需要建立文档的分支。</p></div><div class="form"><div class="field"><label for="url">Git 仓库地址</label><input id="url" type="text" value="https://github.com/acme/platform-api.git"></div><div class="two-col"><div class="field"><label for="user">用户名</label><input id="user" type="text" value="dale@acme.dev"></div><div class="field"><label for="token">访问令牌</label><input id="token" type="password" value="opendw-example-token"><div class="hint">令牌只用于读取仓库。</div></div></div><div class="actions"><span class="hint">支持 GitHub、GitLab 和兼容 Git 的服务。</span><button class="btn primary" id="testConnection">测试连接</button></div></div><div class="success" id="success"><span class="success-icon">✓</span><div><strong>连接成功</strong><small>已找到 4 个分支。你现在可以选择同步范围。</small></div></div></article>
+        <article class="card" id="step2"><div class="card-head"><h1>选择要同步的分支</h1><p class="sub">每个已选分支都有独立的文档和同步历史。</p></div><div class="branch-tools"><input id="search" type="search" placeholder="搜索分支"><span class="selected-count"><span id="count">2</span> 个已选</span></div><div class="branches" id="branchList"></div><div class="branch-foot"><div class="info"><span class="info-icon">ⓘ</span><span>OpenDeepWiki 会分别索引各分支。一个分支的更新不会覆盖其他分支的文档。</span></div><button class="btn primary" id="createBtn">创建并同步 2 个分支</button></div></article>
+      </section>
+      <section class="repo-page" id="editView"><div class="repo-title"><div><p class="sub">acme / platform-api</p><h1>Platform API</h1></div><span class="badge">同步正常</span></div><div class="repo-stats"><div class="stat"><span class="sub">已同步分支</span><strong>2</strong></div><div class="stat"><span class="sub">文档页面</span><strong>184</strong></div><div class="stat"><span class="sub">上次同步</span><strong>12 分钟前</strong></div></div>
+        <div class="backdrop"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="editTitle"><div class="modal-head"><div><h2 id="editTitle">编辑同步分支</h2><p class="sub">选择需要保留、移除或添加的分支。</p></div><button class="close close-edit" aria-label="关闭">×</button></div><div class="modal-body"><p class="section-label">当前同步</p><div class="edit-row"><div><div class="row-name">develop <span class="badge">默认</span></div><div class="row-sub">上次同步于 12 分钟前</div></div><label class="switch">保留<input class="current-toggle" type="checkbox" checked data-name="develop"><span class="track"></span></label><button class="btn sync">立即同步</button></div><div class="edit-row"><div><div class="row-name">main</div><div class="row-sub">上次同步于 1 小时前</div></div><label class="switch">保留<input class="current-toggle" type="checkbox" checked data-name="main"><span class="track"></span></label><button class="btn sync">立即同步</button></div><div class="divider"></div><p class="section-label">可用分支</p><div class="edit-row"><div><div class="row-name">release/2.4</div><div class="row-sub">由 Mina 提交 · 2 天前</div></div><label class="switch">添加<input class="available-toggle" type="checkbox" data-name="release/2.4"><span class="track"></span></label></div><div class="edit-row"><div><div class="row-name">feature/audit-log</div><div class="row-sub">由 Chen 提交 · 5 天前</div></div><label class="switch">添加<input class="available-toggle" type="checkbox" data-name="feature/audit-log"><span class="track"></span></label></div><div class="divider"></div><div class="summary"><div><b>应用前比较</b><div class="sub">检查分支变更后再应用。</div></div><div class="delta" id="delta"><span>没有变更</span></div></div></div><div class="modal-foot"><button class="btn close-edit">取消</button><button class="btn primary" id="applyBtn" disabled>应用变更</button></div></div></div>
+      </section>
+    </div>
+  </main>
+</div>
+<div class="confirm" id="confirm"><div class="confirm-box"><div class="warning">!</div><h2>删除已索引的文档？</h2><p id="confirmText">移除分支会删除它的已索引文档和同步历史。此操作不能撤销。</p><div class="confirm-actions"><button class="btn" id="cancelRemove">返回检查</button><button class="btn danger" id="confirmRemove">删除并应用</button></div></div></div>
+<div class="toast" id="toast">已开始同步所选分支</div>
+<script>
+  const branches=[{name:'develop',meta:'Mina 提交 · 18 分钟前',hash:'a92f5c1',def:true,on:true},{name:'main',meta:'Chen 提交 · 1 小时前',hash:'07c10be',on:true},{name:'release/2.4',meta:'Mina 提交 · 2 天前',hash:'da18ef4',on:false},{name:'feature/audit-log',meta:'Chen 提交 · 5 天前',hash:'f0937c2',on:false}];
+  const list=document.querySelector('#branchList'),count=document.querySelector('#count'),createBtn=document.querySelector('#createBtn');
+  function render(q=''){ list.innerHTML=''; branches.filter(b=>b.name.includes(q.toLowerCase())).forEach(b=>{const row=document.createElement('label');row.className='branch-card'+(b.on?' selected':'');row.innerHTML=`<input type="checkbox" ${b.on?'checked':''}><div><div class="branch-name">${b.name}${b.def?'<span class="badge">默认</span>':''}</div><div class="meta">${b.meta}</div></div><span class="commit">${b.hash}</span>`;row.querySelector('input').onchange=e=>{b.on=e.target.checked;render(document.querySelector('#search').value);updateCount()};list.append(row)}); }
+  function updateCount(){const n=branches.filter(b=>b.on).length;count.textContent=n;createBtn.textContent=`创建并同步 ${n} 个分支`;createBtn.disabled=!n} render();
+  document.querySelector('#search').oninput=e=>render(e.target.value);
+  document.querySelector('#testConnection').onclick=e=>{const button=e.currentTarget;button.disabled=true;button.textContent='正在验证…';setTimeout(()=>{document.querySelector('#success').classList.add('show');button.textContent='连接成功';setTimeout(()=>{document.querySelector('#step1').style.display='none';document.querySelector('#step2').classList.add('show');document.querySelector('#stepOne').className='step done';document.querySelector('#stepOne .step-num').textContent='✓';document.querySelector('#stepTwo').className='step active';},900)},700)};
+  const toast=document.querySelector('#toast'); function showToast(text){toast.textContent=text;toast.classList.add('show');setTimeout(()=>toast.classList.remove('show'),2200)}
+  createBtn.onclick=()=>showToast('已开始同步所选分支');
+  document.querySelectorAll('.segmented button').forEach(btn=>btn.onclick=()=>{document.querySelectorAll('.segmented button').forEach(b=>b.classList.toggle('active',b===btn));const edit=btn.dataset.view==='edit';document.querySelector('#createView').style.display=edit?'none':'block';document.querySelector('#editView').classList.toggle('show',edit);document.querySelector('#crumb').textContent=edit?'Platform API':'新建仓库'});
+  const current=[...document.querySelectorAll('.current-toggle')],available=[...document.querySelectorAll('.available-toggle')],delta=document.querySelector('#delta'),apply=document.querySelector('#applyBtn');
+  function updateDelta(){const removes=current.filter(x=>!x.checked).map(x=>x.dataset.name),adds=available.filter(x=>x.checked).map(x=>x.dataset.name);delta.innerHTML='';adds.forEach(x=>delta.insertAdjacentHTML('beforeend',`<span class="add">+ ${x}</span>`));removes.forEach(x=>delta.insertAdjacentHTML('beforeend',`<span class="remove">− ${x}</span>`));if(!adds.length&&!removes.length)delta.innerHTML='<span>没有变更</span>';apply.disabled=!adds.length&&!removes.length} [...current,...available].forEach(x=>x.onchange=updateDelta);
+  document.querySelectorAll('.sync').forEach(x=>x.onclick=()=>showToast('已请求同步此分支'));
+  document.querySelectorAll('.close-edit').forEach(x=>x.onclick=()=>document.querySelector('[data-view="create"]').click());
+  apply.onclick=()=>{const removes=current.filter(x=>!x.checked).map(x=>x.dataset.name);if(removes.length){document.querySelector('#confirmText').textContent=`移除 ${removes.join('、')} 会删除对应的已索引文档和同步历史。此操作不能撤销。`;document.querySelector('#confirm').classList.add('show')}else{showToast('分支变更已应用');available.forEach(x=>x.checked=false);updateDelta()}};
+  document.querySelector('#cancelRemove').onclick=()=>document.querySelector('#confirm').classList.remove('show');document.querySelector('#confirmRemove').onclick=()=>{document.querySelector('#confirm').classList.remove('show');showToast('分支变更已应用');current.forEach(x=>x.checked=true);available.forEach(x=>x.checked=false);updateDelta()};
+</script>
+</body>
+</html>

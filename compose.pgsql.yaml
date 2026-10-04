@@ -7,6 +7,8 @@ services:
     ports:
       - "8080:8080"
     restart: unless-stopped
+    # Root, as in compose.yaml: the bind-mounted ./data directory (key ring, repositories) is created by Docker as root.
+    user: "0:0"
     depends_on:
       postgres:
         condition: service_healthy
@@ -27,8 +29,11 @@ services:
       - Database__Type=postgresql
       - ConnectionStrings__Default=Host=postgres;Port=5432;Database=opendeepwiki;Username=postgres;Password=opendeepwiki123
 
-      # JWT 认证配置 (生产环境请修改)
-      - JWT_SECRET_KEY=OpenDeepWiki-Default-Secret-Key-Please-Change-In-Production-Environment-2024
+      # JWT 认证配置 (必填: 至少 32 字节的随机值, Production 环境不接受内置默认值)
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:?Set JWT_SECRET_KEY to a random value of at least 32 bytes}
+
+      # Data Protection 密钥环 (必须持久化: 丢失后所有已保存的 Git 凭据无法解密, 请与数据库一同备份)
+      - DataProtection__KeyRingPath=/data/dataprotection-keys
 
       # 仓库存储目录
       - REPOSITORIES_DIRECTORY=/data
@@ -60,10 +65,10 @@ services:
       - WIKI_PARALLEL_COUNT=5
 
       # 集群同时生成的仓库 Wiki 数量 (默认: 1，多实例共享这个上限)
-      - WIKI_MAX_CONCURRENT_GENERATIONS=1
+      - WIKI_MAX_CONCURRENT_GENERATIONS=${WIKI_MAX_CONCURRENT_GENERATIONS:-1}
 
       # 多语言支持 (逗号分隔，如: en,zh,ja,ko,es,fr,de,pt-br)
-      - WIKI_LANGUAGES=en,zh,zh-tw,ja,ko,es,fr,de,pt-br,pl,ru,ar
+      - WIKI_LANGUAGES=${WIKI_LANGUAGES:-en,vi}
     volumes:
       - ./data:/data
 
@@ -96,8 +101,6 @@ services:
       - POSTGRES_DB=opendeepwiki
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=opendeepwiki123
-    ports:
-      - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
 

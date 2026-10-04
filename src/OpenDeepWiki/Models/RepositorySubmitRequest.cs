@@ -31,13 +31,20 @@ public class RepositorySubmitRequest
     public string OrgName { get; set; } = string.Empty;
 
     /// <summary>
-    /// 仓库账户
+    /// Shared Git connection that holds the credential of a private repository.
+    /// </summary>
+    [StringLength(36)]
+    public string? GitConnectionId { get; set; }
+
+    /// <summary>
+    /// Not accepted any more. The field stays so that an older client gets a stable validation error
+    /// that names <see cref="GitConnectionId"/>, and not a silent drop. It is removed with the legacy columns.
     /// </summary>
     [StringLength(200)]
     public string? AuthAccount { get; set; }
 
     /// <summary>
-    /// 仓库密码（明文存储）
+    /// Not accepted any more. See <see cref="AuthAccount"/>.
     /// </summary>
     [StringLength(500)]
     public string? AuthPassword { get; set; }

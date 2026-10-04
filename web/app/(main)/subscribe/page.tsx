@@ -21,27 +21,23 @@ export default function SubscribePage() {
   const [total, setTotal] = useState(0);
   const pageSize = 12;
 
-  const fetchSubscriptions = useCallback(async () => {
+  const fetchSubscriptions = useCallback(() => {
     if (!user?.id) return;
 
-    setIsLoading(true);
-    setError(null);
-    try {
-      const response = await getUserSubscriptions(user.id, page, pageSize);
+    return getUserSubscriptions(user.id, page, pageSize).then(response => {
       setSubscriptions(response.items);
       setTotal(response.total);
-    } catch (err) {
+      setError(null);
+    }).catch(err => {
       setError(err instanceof Error ? err.message : t("subscribe.failedToLoad"));
-    } finally {
+    }).finally(() => {
       setIsLoading(false);
-    }
-  }, [user?.id, page]);
+    });
+  }, [user, page, t]);
 
   useEffect(() => {
     if (!authLoading && isAuthenticated) {
       fetchSubscriptions();
-    } else if (!authLoading && !isAuthenticated) {
-      setIsLoading(false);
     }
   }, [authLoading, isAuthenticated, fetchSubscriptions]);
 
@@ -181,7 +177,7 @@ export default function SubscribePage() {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => setPage(p => Math.max(1, p - 1))}
+                  onClick={() => { setIsLoading(true); setError(null); setPage(p => Math.max(1, p - 1)); }}
                   disabled={page === 1}
                 >
                   {t("subscribe.previous")}
@@ -192,7 +188,7 @@ export default function SubscribePage() {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => setPage(p => p + 1)}
+                  onClick={() => { setIsLoading(true); setError(null); setPage(p => p + 1); }}
                   disabled={page >= Math.ceil(total / pageSize)}
                 >
                   {t("subscribe.next")}

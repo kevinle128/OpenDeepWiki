@@ -62,7 +62,7 @@ public class IncrementalUpdateService : IIncrementalUpdateService
         }
 
         var branch = await _context.RepositoryBranches
-            .FirstOrDefaultAsync(b => b.Id == branchId && !b.IsDeleted, cancellationToken);
+            .FirstOrDefaultAsync(b => b.Id == branchId && b.RepositoryId == repositoryId && !b.IsDeleted, cancellationToken);
 
         if (branch == null)
         {
@@ -138,8 +138,10 @@ public class IncrementalUpdateService : IIncrementalUpdateService
             var repository = await _context.Repositories
                 .FirstOrDefaultAsync(r => r.Id == repositoryId && !r.IsDeleted, cancellationToken);
 
+            // The branch must belong to the repository: a caller that knows two IDs must not run work
+            // for a branch of another repository.
             var branch = await _context.RepositoryBranches
-                .FirstOrDefaultAsync(b => b.Id == branchId && !b.IsDeleted, cancellationToken);
+                .FirstOrDefaultAsync(b => b.Id == branchId && b.RepositoryId == repositoryId && !b.IsDeleted, cancellationToken);
 
             if (repository == null || branch == null)
             {
@@ -184,6 +186,36 @@ public class IncrementalUpdateService : IIncrementalUpdateService
                 previousCommitId,
                 currentCommitId,
                 cancellationToken);
+
+            if (!string.IsNullOrEmpty(previousCommitId))
+            {
+                // The wiki updater only receives paths that still exist, so it cannot remove documents of
+                // deleted or renamed files. The baseline stays put and the caller runs a full generation.
+                var deletedFiles = await _repositoryAnalyzer.GetDeletedFilesAsync(
+                    workspace,
+                    previousCommitId,
+                    currentCommitId,
+                    cancellationToken);
+
+                if (deletedFiles.Length > 0)
+                {
+                    stopwatch.Stop();
+                    _logger.LogInformation(
+                        "Deleted files need a full generation. RepositoryId: {RepositoryId}, BranchId: {BranchId}, DeletedFiles: {DeletedFilesCount}",
+                        repositoryId, branchId, deletedFiles.Length);
+
+                    return new IncrementalUpdateResult
+                    {
+                        Success = false,
+                        RequiresFullGeneration = true,
+                        ErrorMessage = "Deleted files need a full generation of the branch",
+                        PreviousCommitId = previousCommitId,
+                        CurrentCommitId = currentCommitId,
+                        ChangedFilesCount = changedFiles.Length,
+                        Duration = stopwatch.Elapsed
+                    };
+                }
+            }
 
             if (changedFiles.Length == 0 && !string.IsNullOrEmpty(previousCommitId))
             {
@@ -288,11 +320,26 @@ public class IncrementalUpdateService : IIncrementalUpdateService
     public async Task<string> TriggerManualUpdateAsync(
         string repositoryId,
         string branchId,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? requestedBy = null)
     {
         _logger.LogInformation(
             "Manual update triggered. RepositoryId: {RepositoryId}, BranchId: {BranchId}",
             repositoryId, branchId);
+
+        var repositoryExists = await _context.Repositories
+            .AnyAsync(r => r.Id == repositoryId && !r.IsDeleted, cancellationToken);
+        if (!repositoryExists)
+        {
+            throw new IncrementalUpdateRejectedException(IncrementalUpdateErrorCodes.RepositoryNotFound);
+        }
+
+        var branch = await _context.RepositoryBranches
+            .FirstOrDefaultAsync(b => b.Id == branchId && b.RepositoryId == repositoryId && !b.IsDeleted, cancellationToken);
+        if (branch == null)
+        {
+            throw new IncrementalUpdateRejectedException(IncrementalUpdateErrorCodes.BranchNotFound);
+        }
 
         var existingTask = await _context.IncrementalUpdateTasks
             .Where(t => !t.IsDeleted &&
@@ -320,21 +367,19 @@ public class IncrementalUpdateService : IIncrementalUpdateService
 
         if (activeBranchGenerationTask)
         {
-            throw new InvalidOperationException("该分支已有 full generation 任务正在排队或处理中");
+            throw new IncrementalUpdateRejectedException(IncrementalUpdateErrorCodes.BranchGenerationActive);
         }
-
-        var branch = await _context.RepositoryBranches
-            .FirstOrDefaultAsync(b => b.Id == branchId && !b.IsDeleted, cancellationToken);
 
         var task = new IncrementalUpdateTask
         {
             Id = Guid.NewGuid().ToString(),
             RepositoryId = repositoryId,
             BranchId = branchId,
-            PreviousCommitId = branch?.LastCommitId,
+            PreviousCommitId = branch.LastCommitId,
             Status = IncrementalUpdateStatus.Pending,
             Priority = _options.ManualTriggerPriority,
             IsManualTrigger = true,
+            RequestedBy = requestedBy,
             CreatedAt = DateTime.UtcNow
         };
 

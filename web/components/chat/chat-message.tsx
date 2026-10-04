@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import Image from "next/image"
 import { useTranslations } from "next-intl"
 import { User, Bot, Wrench, ChevronDown, ChevronRight, Coins, Brain, Quote } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -81,7 +82,6 @@ function ThinkingDisplay({ thinking }: { thinking: string }) {
  * 工具调用显示组件
  */
 function ToolCallDisplay({ toolCall }: { toolCall: ToolCall }) {
-  const t = useTranslations("chat")
   const [isExpanded, setIsExpanded] = React.useState(false)
 
   return (
@@ -280,7 +280,7 @@ export function ChatMessageItem({ message }: ChatMessageProps) {
         {message.images && message.images.length > 0 && (
           <div className="mb-2 flex flex-wrap gap-2">
             {message.images.map((img, index) => (
-              <img
+              <Image unoptimized width={128} height={128}
                 key={index}
                 src={img.startsWith("data:") ? img : `data:image/png;base64,${img}`}
                 alt={t("message.uploadedImage")}

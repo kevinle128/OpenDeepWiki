@@ -22,10 +22,11 @@ export function useScrollPosition(threshold: number = DEFAULT_THRESHOLD): Scroll
 
   React.useEffect(() => {
     let ticking = false;
+    let frameId = 0;
 
     const handleScroll = () => {
       if (!ticking) {
-        window.requestAnimationFrame(() => {
+        frameId = window.requestAnimationFrame(() => {
           const y = window.scrollY;
           setScrollPosition({
             y,
@@ -38,18 +39,15 @@ export function useScrollPosition(threshold: number = DEFAULT_THRESHOLD): Scroll
     };
 
     // Set initial position
-    const initialY = window.scrollY;
-    setScrollPosition({
-      y: initialY,
-      isScrolled: initialY > threshold,
-    });
+    handleScroll();
 
     window.addEventListener('scroll', handleScroll, { passive: true });
 
     return () => {
       window.removeEventListener('scroll', handleScroll);
+      window.cancelAnimationFrame(frameId);
     };
   }, [threshold]);
 
-  return scrollPosition;
+  return { y: scrollPosition.y, isScrolled: scrollPosition.y > threshold };
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { useTranslations } from "@/hooks/use-translations";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -37,31 +37,33 @@ export function AppStatisticsChart({ appId }: AppStatisticsChartProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [dateRange, setDateRange] = useState<DateRange>("30");
-
-  const fetchStatistics = useCallback(async () => {
+  const requestKey = `${appId}:${dateRange}`;
+  const [lastRequestKey, setLastRequestKey] = useState(requestKey);
+  if (requestKey !== lastRequestKey) {
+    setLastRequestKey(requestKey);
     setIsLoading(true);
     setError(null);
-    try {
-      const endDate = new Date();
-      const startDate = new Date();
-      startDate.setDate(startDate.getDate() - parseInt(dateRange));
-
-      const data = await getAppStatistics(
-        appId,
-        formatDateForApi(startDate),
-        formatDateForApi(endDate)
-      );
-      setStatistics(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load statistics");
-    } finally {
-      setIsLoading(false);
-    }
-  }, [appId, dateRange]);
+  }
 
   useEffect(() => {
-    fetchStatistics();
-  }, [fetchStatistics]);
+    let active = true;
+    const endDate = new Date();
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - parseInt(dateRange));
+
+    getAppStatistics(
+      appId,
+      formatDateForApi(startDate),
+      formatDateForApi(endDate)
+    ).then((data) => {
+      if (active) setStatistics(data);
+    }).catch((err: unknown) => {
+      if (active) setError(err instanceof Error ? err.message : "Failed to load statistics");
+    }).finally(() => {
+      if (active) setIsLoading(false);
+    });
+    return () => { active = false; };
+  }, [appId, dateRange]);
 
   const formatNumber = (num: number) => {
     if (num >= 1000000) return `${(num / 1000000).toFixed(1)}M`;

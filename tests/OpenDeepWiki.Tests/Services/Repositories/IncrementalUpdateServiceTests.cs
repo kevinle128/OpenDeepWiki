@@ -95,6 +95,7 @@ public class IncrementalUpdateServiceTests
                 "new-sha",
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(["src/app.cs"]);
+        SetupNoDeletedFiles(analyzer, "old-sha", "new-sha");
 
         var wikiGenerator = new Mock<IWikiGenerator>(MockBehavior.Strict);
         wikiGenerator
@@ -162,6 +163,7 @@ public class IncrementalUpdateServiceTests
                 "new-sha",
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<string>());
+        SetupNoDeletedFiles(analyzer, "old-sha", "new-sha");
 
         var service = CreateService(context, analyzer: analyzer);
 
@@ -173,6 +175,151 @@ public class IncrementalUpdateServiceTests
         var updatedBranch = await context.RepositoryBranches.SingleAsync(b => b.Id == branch.Id);
         Assert.Equal("new-sha", updatedBranch.LastCommitId);
         Assert.NotNull(updatedBranch.LastProcessedAt);
+    }
+
+    [Fact]
+    public async Task TriggerManualUpdateAsync_RecordsTheRequestingUser()
+    {
+        using var context = CreateContext();
+        var repository = SeedRepository(context, generateSkill: false);
+        var branch = SeedBranch(context, repository.Id, "main", "sha");
+        await context.SaveChangesAsync();
+
+        var taskId = await CreateService(context).TriggerManualUpdateAsync(repository.Id, branch.Id, requestedBy: "user-7");
+
+        Assert.Equal("user-7", (await context.IncrementalUpdateTasks.SingleAsync(item => item.Id == taskId)).RequestedBy);
+    }
+
+    [Fact]
+    public async Task TriggerManualUpdateAsync_WhenBranchBelongsToAnotherRepository_RejectsAndCreatesNoTask()
+    {
+        using var context = CreateContext();
+        var repository = SeedRepository(context, generateSkill: false);
+        var other = SeedRepository(context, generateSkill: false);
+        other.OrgName = "other";
+        var foreignBranch = SeedBranch(context, other.Id, "main", "sha");
+        await context.SaveChangesAsync();
+
+        var exception = await Assert.ThrowsAsync<IncrementalUpdateRejectedException>(
+            () => CreateService(context).TriggerManualUpdateAsync(repository.Id, foreignBranch.Id));
+
+        Assert.Equal(IncrementalUpdateErrorCodes.BranchNotFound, exception.ErrorCode);
+        Assert.Empty(await context.IncrementalUpdateTasks.ToListAsync());
+    }
+
+    [Fact]
+    public async Task TriggerManualUpdateAsync_WhenBranchOrRepositoryIsMissing_RejectsAndCreatesNoTask()
+    {
+        using var context = CreateContext();
+        var repository = SeedRepository(context, generateSkill: false);
+        await context.SaveChangesAsync();
+        var service = CreateService(context);
+
+        var missingBranch = await Assert.ThrowsAsync<IncrementalUpdateRejectedException>(
+            () => service.TriggerManualUpdateAsync(repository.Id, "missing"));
+        var missingRepository = await Assert.ThrowsAsync<IncrementalUpdateRejectedException>(
+            () => service.TriggerManualUpdateAsync("missing", "missing"));
+
+        Assert.Equal(IncrementalUpdateErrorCodes.BranchNotFound, missingBranch.ErrorCode);
+        Assert.Equal(IncrementalUpdateErrorCodes.RepositoryNotFound, missingRepository.ErrorCode);
+        Assert.Empty(await context.IncrementalUpdateTasks.ToListAsync());
+    }
+
+    [Fact]
+    public async Task TriggerManualUpdateAsync_WhenFullGenerationOfTheBranchIsActive_RejectsWithStableCode()
+    {
+        using var context = CreateContext();
+        var repository = SeedRepository(context, generateSkill: false);
+        var branch = SeedBranch(context, repository.Id, "main", "sha");
+        context.BranchGenerationTasks.Add(new BranchGenerationTask
+        {
+            Id = "full",
+            RepositoryId = repository.Id,
+            BranchId = branch.Id,
+            Status = BranchGenerationTaskStatus.Pending
+        });
+        await context.SaveChangesAsync();
+
+        var exception = await Assert.ThrowsAsync<IncrementalUpdateRejectedException>(
+            () => CreateService(context).TriggerManualUpdateAsync(repository.Id, branch.Id));
+
+        Assert.Equal(IncrementalUpdateErrorCodes.BranchGenerationActive, exception.ErrorCode);
+    }
+
+    [Fact]
+    public async Task TriggerManualUpdateAsync_WhenFullGenerationOfAnotherBranchIsActive_StillCreatesTheTask()
+    {
+        using var context = CreateContext();
+        var repository = SeedRepository(context, generateSkill: false);
+        var branch = SeedBranch(context, repository.Id, "main", "sha");
+        var other = SeedBranch(context, repository.Id, "other", "sha");
+        context.BranchGenerationTasks.Add(new BranchGenerationTask
+        {
+            Id = "full",
+            RepositoryId = repository.Id,
+            BranchId = other.Id,
+            Status = BranchGenerationTaskStatus.Processing
+        });
+        await context.SaveChangesAsync();
+
+        var taskId = await CreateService(context).TriggerManualUpdateAsync(repository.Id, branch.Id);
+
+        Assert.NotNull(await context.IncrementalUpdateTasks.SingleAsync(item => item.Id == taskId));
+    }
+
+    [Fact]
+    public async Task ProcessIncrementalUpdateAsync_WhenBranchBelongsToAnotherRepository_FailsWithoutPreparingAWorkspace()
+    {
+        using var context = CreateContext();
+        var repository = SeedRepository(context, generateSkill: false);
+        var other = SeedRepository(context, generateSkill: false);
+        other.OrgName = "other";
+        var foreignBranch = SeedBranch(context, other.Id, "main", "old-sha");
+        await context.SaveChangesAsync();
+        var analyzer = new Mock<IRepositoryAnalyzer>(MockBehavior.Strict);
+
+        var result = await CreateService(context, analyzer: analyzer).ProcessIncrementalUpdateAsync(repository.Id, foreignBranch.Id);
+
+        Assert.False(result.Success);
+        Assert.False(result.RequiresFullGeneration);
+        analyzer.VerifyNoOtherCalls();
+        Assert.Equal("old-sha", (await context.RepositoryBranches.SingleAsync()).LastCommitId);
+    }
+
+    [Fact]
+    public async Task ProcessIncrementalUpdateAsync_WhenSourceFilesWereDeleted_AsksForFullGenerationAndKeepsTheBaseline()
+    {
+        using var context = CreateContext();
+        var repository = SeedRepository(context, generateSkill: false);
+        var branch = SeedBranch(context, repository.Id, "main", "old-sha");
+        SeedBranchLanguage(context, branch.Id, "zh");
+        await context.SaveChangesAsync();
+        var analyzer = new Mock<IRepositoryAnalyzer>(MockBehavior.Strict);
+        analyzer
+            .Setup(x => x.PrepareWorkspaceAsync(repository, branch.BranchName, "old-sha", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new RepositoryWorkspace { CommitId = "new-sha", PreviousCommitId = "old-sha", WorkingDirectory = "C:\\temp\\repo" });
+        analyzer
+            .Setup(x => x.GetChangedFilesAsync(It.IsAny<RepositoryWorkspace>(), "old-sha", "new-sha", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["src/kept.cs"]);
+        analyzer
+            .Setup(x => x.GetDeletedFilesAsync(It.IsAny<RepositoryWorkspace>(), "old-sha", "new-sha", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["src/removed.cs"]);
+        var wikiGenerator = new Mock<IWikiGenerator>(MockBehavior.Strict);
+
+        var result = await CreateService(context, analyzer: analyzer, wikiGenerator: wikiGenerator)
+            .ProcessIncrementalUpdateAsync(repository.Id, branch.Id);
+
+        Assert.False(result.Success);
+        Assert.True(result.RequiresFullGeneration);
+        Assert.Equal("old-sha", (await context.RepositoryBranches.SingleAsync()).LastCommitId);
+        wikiGenerator.VerifyNoOtherCalls();
+    }
+
+    private static void SetupNoDeletedFiles(Mock<IRepositoryAnalyzer> analyzer, string from, string to)
+    {
+        analyzer
+            .Setup(x => x.GetDeletedFilesAsync(It.IsAny<RepositoryWorkspace>(), from, to, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<string>());
     }
 
     private static IncrementalUpdateService CreateService(

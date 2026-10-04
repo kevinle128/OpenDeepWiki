@@ -60,22 +60,25 @@ export default function AdminMcpsPage() {
   });
   const t = useTranslations();
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const result = await getMcpConfigs();
+  const loadData = useCallback(() => {
+    return getMcpConfigs().then((result) => {
       setConfigs(result);
-    } catch (error) {
+    }).catch(error => {
       console.error("Failed to fetch MCP configs:", error);
       toast.error(t('admin.toast.fetchMcpFailed'));
-    } finally {
+    }).finally(() => {
       setLoading(false);
-    }
+    });
   }, [t]);
 
+  const fetchData = useCallback(() => {
+    setLoading(true);
+    return loadData();
+  }, [loadData]);
+
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    void loadData();
+  }, [loadData]);
 
   const openCreateDialog = () => {
     setEditingConfig(null);
@@ -118,7 +121,7 @@ export default function AdminMcpsPage() {
       }
       setShowDialog(false);
       fetchData();
-    } catch (error) {
+    } catch {
       toast.error(editingConfig ? t('admin.toast.updateFailed') : t('admin.toast.createFailed'));
     }
   };
@@ -130,7 +133,7 @@ export default function AdminMcpsPage() {
       toast.success(t('admin.toast.deleteSuccess'));
       setDeleteId(null);
       fetchData();
-    } catch (error) {
+    } catch {
       toast.error(t('admin.toast.deleteFailed'));
     }
   };
@@ -140,7 +143,7 @@ export default function AdminMcpsPage() {
       await updateMcpConfig(config.id, { isActive: !config.isActive });
       toast.success(config.isActive ? t('admin.mcps.disabled') : t('admin.mcps.enabled'));
       fetchData();
-    } catch (error) {
+    } catch {
       toast.error(t('admin.toast.operationFailed'));
     }
   };

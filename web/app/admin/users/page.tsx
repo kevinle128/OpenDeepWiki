@@ -93,6 +93,12 @@ export default function AdminUsersPage() {
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState("all");
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const queryKey = JSON.stringify([page, pageSize, search, roleFilter]);
+  const [loadingQuery, setLoadingQuery] = useState(queryKey);
+  if (loadingQuery !== queryKey) {
+    setLoadingQuery(queryKey);
+    setLoading(true);
+  }
 
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
@@ -103,10 +109,8 @@ export default function AdminUsersPage() {
   const [selectedRoles, setSelectedRoles] = useState<string[]>([]);
   const [newPassword, setNewPassword] = useState("");
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const [usersResult, rolesResult] = await Promise.all([
+  const loadData = useCallback(() => {
+    return Promise.all([
         getUsers(
           page,
           pageSize,
@@ -114,20 +118,25 @@ export default function AdminUsersPage() {
           roleFilter === "all" ? undefined : roleFilter
         ),
         getRoles(),
-      ]);
+      ]).then(([usersResult, rolesResult]) => {
       setData(usersResult);
       setRoles(rolesResult);
-    } catch (error) {
+    }).catch(error => {
       console.error("Failed to fetch users:", error);
       toast.error(t("admin.toast.fetchUserFailed"));
-    } finally {
+    }).finally(() => {
       setLoading(false);
-    }
+    });
   }, [page, pageSize, search, roleFilter, t]);
 
+  const fetchData = useCallback(() => {
+    setLoading(true);
+    return loadData();
+  }, [loadData]);
+
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    void loadData();
+  }, [loadData]);
 
   const handleSearchInput = (value: string) => {
     setSearchInput(value);

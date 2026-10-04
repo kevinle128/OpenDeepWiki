@@ -228,9 +228,15 @@ public class AdminGitHubImportService : IAdminGitHubImportService
             .Where(r => requestUrls.Contains(r.GitUrl) && !r.IsDeleted)
             .ToDictionaryAsync(r => r.GitUrl, r => r, StringComparer.OrdinalIgnoreCase, cancellationToken);
 
+        var registeredRemoteIds = await GitHubAppRepositoryAdapter.FindRegisteredRemoteIdsAsync(
+            _context,
+            request.Repos.Select(GitHubAppRepositoryAdapter.RemoteIdOf).OfType<string>().ToList(),
+            cancellationToken);
+
         foreach (var repo in request.Repos)
         {
-            if (existingRepos.ContainsKey(repo.CloneUrl))
+            var remoteId = GitHubAppRepositoryAdapter.RemoteIdOf(repo);
+            if (existingRepos.ContainsKey(repo.CloneUrl) || (remoteId is not null && registeredRemoteIds.Contains(remoteId)))
             {
                 result.Skipped++;
                 result.SkippedRepos.Add(repo.FullName);
@@ -255,6 +261,11 @@ public class AdminGitHubImportService : IAdminGitHubImportService
                 ForkCount = repo.ForksCount,
                 IsDepartmentOwned = true
             };
+
+            if (remoteId is not null)
+            {
+                GitHubAppRepositoryAdapter.AssignIdentity(repoEntity, remoteId, repo.DefaultBranch);
+            }
 
             _context.Repositories.Add(repoEntity);
 

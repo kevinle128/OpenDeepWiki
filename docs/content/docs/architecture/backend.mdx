@@ -22,6 +22,8 @@ src/OpenDeepWiki/
 │   ├── EmbedEndpoints.cs      # 可嵌入聊天小部件 API
 │   ├── GitHubImportEndpoints.cs   # GitHub App 仓库导入
 │   ├── RepositoryUploadEndpoints.cs   # ZIP 压缩包上传导入
+│   ├── GitConnectionEndpoints.cs      # 共享 Git 连接、提供商目录
+│   ├── ConnectedRepositoryEndpoints.cs # 通过连接添加仓库、已索引分支
 │   ├── BranchGenerationEndpoints.cs   # 分支生成任务管理
 │   ├── IncrementalUpdateEndpoints.cs  # 增量更新触发
 │   ├── McpProviderEndpoints.cs    # MCP Provider 管理
@@ -31,7 +33,8 @@ src/OpenDeepWiki/
 ├── Services/                  # 业务逻辑层
 │   ├── AI/                    # AI Provider 解析与用量核算
 │   ├── Auth/                  # JWT、用户上下文、认证
-│   ├── Repositories/          # 仓库分析、处理、增量更新、分支生成
+│   ├── GitConnections/        # 共享 Git 连接、提供商客户端、令牌保护、凭据解析、旧凭据迁移
+│   ├── Repositories/          # 仓库分析、处理、增量更新、分支生成、连接仓库、分支移除
 │   ├── Wiki/                  # Wiki 生成（目录 + 内容 + Mermaid 归一化）
 │   ├── Chat/                  # 聊天助手、应用管理、嵌入服务
 │   ├── MindMap/               # 思维导图生成
@@ -105,6 +108,8 @@ app.MapEmbedEndpoints();
 app.MapSystemEndpoints();
 app.MapIncrementalUpdateEndpoints();
 app.MapBranchGenerationEndpoints();
+app.MapGitConnectionEndpoints();
+app.MapConnectedRepositoryEndpoints();
 app.MapMcpProviderEndpoints();
 // ...
 ```
@@ -130,6 +135,87 @@ app.MapMcp("/api/mcp/{owner}/{repo}");
 | `EmbedService` | `IEmbedService` | 可嵌入小部件认证和聊天 |
 | `GraphifyArtifactService` | — | 调用内置 `graphifyy` CLI 生成知识图谱产物 |
 | `UserGitHubImportService` | `IUserGitHubImportService` | GitHub App 凭证缓存与仓库导入 |
+
+## Shared Git connections
+
+A Git connection holds one provider token for one provider account. Every signed-in user can use it. Only the creator
+and an Admin can change it. The API is described in [Repositories API](/docs/api-reference/repositories). This section
+describes the parts of the backend that make it safe.
+
+### Provider clients
+
+`IGitProviderClient` has one implementation for each provider: `GitHubPatProviderClient` (GitHub, with
+`https://github.com` as the only origin) and `GitLabPatProviderClient` (GitLab.com or a self-hosted GitLab).
+`IGitProviderClientResolver` selects the client by `GitProvider`.
+
+- Repositories and branches are addressed by the numeric provider ID, so a rename or a transfer does not break a link.
+- Lists use cursor paging. The cursor is opaque. `ProviderPaginationCursorCodec` protects it with Data Protection and
+  binds it to the provider, the connection, and the API origin, so a cursor from one connection is refused on another.
+  The backend never follows a pagination link from the provider.
+- Every failure becomes a `GitProviderException` with a stable code (`PROVIDER_*`). Messages never contain provider text
+  or the token. A rejected token returns HTTP 422 (not 401, because the web client signs the user out on any 401).
+  Rate limits return 429 with `Retry-After`, timeouts 504, and other provider failures 502.
+- Tokens travel only in request headers. Automatic redirects are off, so a redirect target never receives the token.
+
+### Address policy
+
+`GitLabServerUrlValidator` accepts only an HTTPS origin and resolves the host name once. `GitProviderGuardHandler` runs
+in front of the GitLab handler, and the handler connects only to the validated addresses, so the check and the
+connection use the same DNS answer. Public addresses pass. Private and loopback addresses need an entry in
+`GitProviders:AllowedPrivateHosts` or `GitProviders:AllowedPrivateCidrs`. Link-local, metadata, unspecified, multicast,
+and reserved addresses are always blocked. See [Environment variables](/docs/configuration/environment-variables).
+
+### Token protection
+
+`DataProtectionGitConnectionSecretProtector` encrypts the token before it is stored in `GitConnections.ProtectedToken`.
+The key ring is in `DataProtection:KeyRingPath` and is required in Production (`Program.ValidateProductionSecurity`).
+No API returns a token. Code decrypts it only to call the provider or to run a Git operation, and `GitCredentialResolver` selects the credential for each Git operation. A repository that has a
+`GitConnectionId` uses its connection only: when the connection is disabled, deleted, or unreadable, the operation
+fails and never falls back to the old password. A repository without a connection uses the legacy fields.
+
+During clone and fetch, `RepositoryAnalyzer` gives the credential only to the origin stored on the connection. The
+remote must be an HTTPS URL without user information and must pass the address policy before the credential is read. No
+certificate check bypass is installed.
+
+### Authorization
+
+| Action | Who can do it |
+|---|---|
+| Create a connection, list connections, browse the catalog, connect a repository, add and remove branches, rebuild, sync, retry, cancel | Any signed-in user (anonymous: 401) |
+| Rename, rotate the token, test, enable, disable, delete, read audit events | The creator or an Admin (other users: 403 `CONNECTION_MAINTENANCE_FORBIDDEN`) |
+| Delete a repository, change its visibility | Unchanged: Admin policy and the owner rule |
+| Read or change a private repository | Its owner or an Admin. Other users get 404. There is no department rule |
+
+`IGitConnectionAuthorizationService` decides `CanUse` and `CanMaintainAsync`. Branch routes need a signed-in user and check that
+the branch belongs to the repository in the URL.
+
+### Orchestration
+
+- `ConnectedRepositoryService` connects a repository to a connection. It checks every selected branch against the
+  provider, then writes the repository, the branches, one full-generation task for each new branch, one branch lock for
+  each task, and the audit events in one transaction. The first statement of the transaction touches the connection row
+  only if the connection is enabled and not deleted, so a connection that is disabled or deleted at that moment is
+  rejected. A repeated request changes nothing. A new connected repository starts with the status `Completed` and
+  its branches carry the tasks.
+- `RepositoryGenerationLockService` has repository-scope locks and branch-scope locks. Two branches of one repository can
+  run at the same time and still share the global generation slots. A repository-scope lock excludes every other lock
+  of that repository.
+- `BranchGenerationTaskService` queues, retries, and cancels full-generation tasks for one branch. Each task is
+  independent: another branch of the same repository is not changed.
+- `IndexedBranchRemovalService` removes one branch with its catalogs, documents, languages, tasks, locks, and
+  artifacts in one transaction. If a task of that branch is processing, it returns 409 `BRANCH_JOB_ACTIVE` and changes
+  nothing. `BranchGenerationWorker` removes the workspace directories of removed branches every five minutes.
+- `BranchActionAuditor` writes who did what (`BranchAdded`, `BranchRebuildRequested`, `BranchSyncRequested`,
+  `BranchTaskRetried`, `BranchTaskCancelled`, `BranchRemoved`) to `GitConnectionAuditEvents`.
+
+Automatic synchronisation is not a per-repository setting. `IncrementalUpdateWorker` runs one global schedule
+(`IncrementalUpdate:*`), and a user can start a sync of one branch by hand.
+
+### Legacy credential migration
+
+`LegacyGitCredentialMigrationService` moves old plaintext credentials into connections. An Admin starts it through
+`/api/admin/git-connection-migration`. Nothing runs at start-up. Removing the legacy columns is written and tested on
+copies, and it is not active. The runbook is [Legacy credential migration](/docs/deployment/legacy-credential-migration).
 
 ## AI 集成（AgentFactory）
 

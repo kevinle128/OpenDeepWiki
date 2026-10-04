@@ -24,6 +24,7 @@ web/
 │   │   ├── organizations/     # 组织管理
 │   │   ├── private/           # 私有仓库
 │   │   ├── profile/           # 用户资料
+│   │   ├── repositories/      # 共享仓库工作区（Git 连接、目录、索引计划、分支管理）
 │   │   ├── recommend/         # 推荐仓库
 │   │   ├── settings/          # 用户设置
 │   │   └── subscribe/         # 订阅管理
@@ -49,12 +50,14 @@ web/
 ├── components/                # 可复用组件
 │   ├── ui/                    # 基础 UI 原语（基于 Radix UI）
 │   ├── repo/                  # 仓库相关组件
+│   ├── repositories/          # 共享仓库工作区组件
 │   ├── chat/                  # 聊天助手组件
 │   ├── apps/                  # 应用管理组件
 │   ├── admin/                 # 管理面板组件
 │   ├── github/                # GitHub 导入组件
 │   └── animate-ui/            # 动画组件（Motion）
 ├── hooks/                     # 自定义 React hooks
+├── e2e/                       # Playwright 端到端测试（仅 Chromium）
 ├── lib/                       # 工具函数和 API 客户端
 ├── contexts/                  # React 上下文提供商
 ├── i18n/                      # 国际化配置
@@ -80,7 +83,8 @@ web/
 | 目录 | 用途 |
 |-----------|---------|
 | `components/ui/` | 基于 Radix UI 的基础 UI 原语（Button、Dialog、Select、Tabs 等） |
-| `components/repo/` | 仓库浏览 — 侧边栏、Markdown 渲染器、思维导图查看器、源文件 |
+| `components/repo/` | 仓库浏览 — 侧边栏、Markdown 渲染器、思维导图查看器、源文件；提交表单和私有仓库的连接选择器 |
+| `components/repositories/` | 共享仓库工作区 — 连接列表和对话框、仓库目录、索引计划面板、已索引分支面板 |
 | `components/chat/` | 聊天助手 — 消息显示、面板、模型选择器、图像上传 |
 | `components/apps/` | 应用管理 — 表单对话框、日志表、统计图表 |
 | `components/admin/` | 管理面板侧边栏和导航 |
@@ -127,6 +131,7 @@ web/
 | 模块 | 端点 |
 |--------|-----------|
 | `repository-api.ts` | 仓库 CRUD、提交、可见性 |
+| `git-connections-api.ts` | Git 连接、提供商目录、连接仓库、已索引分支（经共享的 `apiClient`） |
 | `chat-api.ts` | 聊天流、会话管理 |
 | `auth-api.ts` | 登录、注册、令牌刷新 |
 | `admin-api.ts` | 管理员统计、用户/角色管理 |
@@ -140,6 +145,40 @@ web/
 
 API 代理 URL 通过 `API_PROXY_URL` 环境变量配置（默认为后端服务 URL）。
 
+## Shared repository workspace
+
+The route `/repositories` (`app/(main)/repositories/page.tsx`) is the workspace for shared Git connections. It is in the
+sidebar for signed-in users only. An anonymous visitor is sent to `/auth`.
+
+| Part | File |
+|---|---|
+| Layout and state | `components/repositories/repository-workspace.tsx` |
+| Connection list, create, edit, test, enable, disable, delete | `connection-list.tsx`, `connection-dialog.tsx` |
+| Provider catalog with cursor paging | `repository-catalog.tsx` |
+| Branch selection and index request | `index-plan-panel.tsx` |
+| Branches of an indexed repository: add, sync, rebuild, retry, cancel, remove | `managed-branches-panel.tsx` |
+| Error code to localized text | `error-key.ts` |
+| Types and API calls | `types/git-connection.ts`, `lib/git-connections-api.ts` |
+
+- **Layout.** From 950 px the workspace shows three columns: connections, repositories, and the plan or the managed
+  branches. Below 950 px it shows three tabs (`hooks/use-narrow-layout.ts` uses the media query `(max-width: 949px)`).
+- **State.** The URL holds only the connection ID (`connection`), the provider repository ID (`repo`), the search text
+  (`q`), the access filter (`access`), and the sort (`sort`) (`workspace-url-state.ts`). A token is never put in the URL,
+  local storage, or session storage. The edit dialog opens with an empty token field and sends a token only when the
+  user types a new one.
+- **Catalog.** The backend pages the catalog by cursor only. The UI loads more pages on request, and the search, access
+  filter, and sort work on the repositories that are already loaded. The UI says so. An epoch counter and
+  `AbortController` drop a late answer for a connection that is no longer selected.
+- **Index state.** Catalog items carry no local repository ID. When the user selects a repository, the workspace looks
+  for the local repository in `/api/v1/repositories/list` by connection ID and clone URL. That lookup reads the first
+  50 keyword matches only.
+- **Errors.** The UI shows localized text chosen by the stable `errorCode`, never the backend message. A rejected
+  provider token (422) does not sign the user out. A 409 for an active branch job keeps the branch and moves focus to an
+  alert.
+- **Submit form.** `components/repo/repository-submit-form.tsx` has no account or password field. For a private Git
+  repository it shows `private-connection-picker.tsx`, which lists enabled connections of the same server, and it sends
+  `gitConnectionId`.
+
 ## 样式
 
 - **Tailwind CSS 4** — 用于所有样式的实用优先 CSS 框架
@@ -149,10 +188,27 @@ API 代理 URL 通过 `API_PROXY_URL` 环境变量配置（默认为后端服务
 
 ## 测试
 
-前端使用 Vitest + Testing Library，测试文件位于 `lib/__tests__/` 和 `hooks/__tests__/`：
+前端使用 Vitest + Testing Library。测试文件位于 `lib/__tests__/`、`hooks/__tests__/`，以及组件和页面旁边（例如 `components/repositories/*.test.tsx`）：
 
 ```bash
 cd web && npm test
+```
+
+### 端到端测试
+
+`web/e2e/` 有 Playwright 测试，仅使用 Chromium：
+
+| 文件 | 内容 |
+|---|---|
+| `repository-workspace.spec.ts` | GitHub、GitLab.com、自托管 GitLab（公共主机和允许列表中的私有主机）、分支管理、提供商错误和过期状态 |
+| `repository-workspace-permissions.spec.ts` | 匿名用户、非创建者、创建者、管理员、禁用的连接 |
+| `repository-workspace-responsive.spec.ts` | 1440 px、900 px、390 px 布局和仅键盘的流程 |
+| `e2e/support/` | 固定端口、端口占用检查、全局启动和停止、登录和页面辅助函数 |
+
+`playwright.config.ts` 在固定端口 `4310`（前端）和 `4311`（后端）上启动并停止两个进程。后端是 `tests/OpenDeepWiki.E2EHost`：同一个应用，使用临时 SQLite 数据库和进程内的假 Git 提供商，所以测试不访问真实的提供商。前端的 `API_PROXY_URL` 明确指向这个后端。端口被占用时运行直接停止。
+
+```bash
+cd web && npx playwright install chromium && npm run test:e2e
 ```
 
 ## 关键依赖

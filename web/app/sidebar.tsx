@@ -4,6 +4,7 @@ import {
   Compass,
   ThumbsUp,
   GitFork,
+  GitBranch,
   Star,
   Bookmark,
   Building2,
@@ -64,7 +65,7 @@ type NavGroupDef = {
   items: NavItemDef[];
 };
 
-const navGroups: NavGroupDef[] = [
+export const navGroups: NavGroupDef[] = [
   {
     labelKey: "groupDiscover",
     items: [
@@ -77,6 +78,7 @@ const navGroups: NavGroupDef[] = [
     labelKey: "groupWorkspace",
     items: [
       { key: "private", url: "/private", icon: GitFork, requireAuth: true },
+      { key: "repositories", url: "/repositories", icon: GitBranch, requireAuth: true },
       { key: "subscribe", url: "/subscribe", icon: Star, requireAuth: true },
       { key: "bookmarks", url: "/bookmarks", icon: Bookmark, requireAuth: true },
       { key: "apps", url: "/apps", icon: AppWindow, requireAuth: true },

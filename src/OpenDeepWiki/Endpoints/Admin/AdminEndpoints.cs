@@ -22,6 +22,7 @@ public static class AdminEndpoints
         adminGroup.MapAdminChatAssistantEndpoints();
         adminGroup.MapAdminMcpProviderEndpoints();
         adminGroup.MapAdminApiKeyEndpoints();
+        adminGroup.MapAdminGitConnectionMigrationEndpoints();
 
         return app;
     }

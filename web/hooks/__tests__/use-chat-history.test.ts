@@ -6,15 +6,12 @@
  * 
  * Feature: doc-chat-assistant, Property 2: 对话历史完整性
  */
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
 import * as fc from 'fast-check'
 import { 
   useChatHistory, 
-  ChatMessage, 
   NewChatMessage,
-  ToolCall,
-  ToolResult 
 } from '../use-chat-history'
 
 // 生成随机工具调用

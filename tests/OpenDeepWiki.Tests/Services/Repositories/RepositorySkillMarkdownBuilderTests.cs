@@ -1,3 +1,4 @@
+using System.IO.Compression;
 using OpenDeepWiki.Entities;
 using OpenDeepWiki.Services.Repositories;
 using Xunit;
@@ -60,6 +61,42 @@ public class RepositorySkillMarkdownBuilderTests
         Assert.Contains("Use this skill when answering questions", markdown);
         Assert.Contains("- [Overview](references/docs/Overview.md)", markdown);
         Assert.Contains("  - [API Guide](references/docs/Overview/API%20Guide.md)", markdown);
+    }
+
+    [Fact]
+    public async Task AddDocumentsToArchiveAsync_ShouldIncludeDocumentsWithChildCatalogs()
+    {
+        var builder = new RepositorySkillMarkdownBuilder();
+        var catalogs = new List<DocCatalog>
+        {
+            new()
+            {
+                Id = "overview",
+                Title = "Overview",
+                DocFileId = "doc-overview",
+                DocFile = new DocFile { Content = "# Overview" }
+            },
+            new()
+            {
+                Id = "api",
+                ParentId = "overview",
+                Title = "API Guide",
+                DocFileId = "doc-api",
+                DocFile = new DocFile { Content = "# API Guide" }
+            }
+        };
+        using var stream = new MemoryStream();
+        using (var archive = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            await builder.AddDocumentsToArchiveAsync(archive, catalogs, "references/docs");
+        }
+
+        stream.Position = 0;
+        using var exportedArchive = new ZipArchive(stream, ZipArchiveMode.Read);
+        using var overviewReader = new StreamReader(exportedArchive.GetEntry("references/docs/Overview.md")!.Open());
+        using var apiReader = new StreamReader(exportedArchive.GetEntry("references/docs/Overview/API Guide.md")!.Open());
+        Assert.Equal("# Overview", await overviewReader.ReadToEndAsync());
+        Assert.Equal("# API Guide", await apiReader.ReadToEndAsync());
     }
 
     [Fact]

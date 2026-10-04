@@ -1,0 +1,11 @@
+tsc:
+lint:
+✖ 146 problems (80 errors, 66 warnings)
+scripts:
+9:    "lint": "eslint",
+10:    "test": "vitest --run",
+11:    "test:watch": "vitest"
+59:    "@testing-library/jest-dom": "^6.10.0",
+60:    "@testing-library/react": "^16.3.2",
+72:    "vitest": "^4.1.11"
+(eval):2: no matches found: jest.config.*

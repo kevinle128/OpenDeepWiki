@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "@/hooks/use-translations";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -15,7 +15,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
-import { defaultWikiLanguage, wikiLanguageCodes } from "@/i18n/config";
+import { defaultWikiLanguage, defaultWikiLanguages } from "@/i18n/config";
 import {
   ExternalLink,
   GitBranch,
@@ -86,7 +86,7 @@ export function GitHubRepoBrowser({
   // All repos (fetched in full)
   const [allRepos, setAllRepos] = useState<GitHubRepo[]>([]);
   const [repoTotalCount, setRepoTotalCount] = useState(0);
-  const [repoLoading, setRepoLoading] = useState(false);
+  const [repoLoading, setRepoLoading] = useState(true);
   const [loadProgress, setLoadProgress] = useState("");
 
   // Selection
@@ -104,41 +104,30 @@ export function GitHubRepoBrowser({
   const [page, setPage] = useState(1);
 
   // Import
-  const [selectedDepartmentId, setSelectedDepartmentId] = useState<string>(PERSONAL_ONLY_VALUE);
+  const [departmentId, setSelectedDepartmentId] = useState<string>(PERSONAL_ONLY_VALUE);
+  const selectedDepartmentId = !showPersonalOption && departmentId === PERSONAL_ONLY_VALUE
+    ? departments[0]?.id ?? PERSONAL_ONLY_VALUE
+    : departmentId;
   const [languageCode, setLanguageCode] = useState<string>(defaultWikiLanguage);
   const [generateSkill, setGenerateSkill] = useState(true);
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState<BatchImportResult | null>(null);
-
-  // Set default department when departments change
-  useEffect(() => {
-    if (showPersonalOption) {
-      // For user mode, default to "Personal only"
-      if (selectedDepartmentId === PERSONAL_ONLY_VALUE && departments.length > 0) {
-        // Keep personal as default
-      }
-    } else {
-      // For admin mode, default to first department
-      if (departments.length > 0 && selectedDepartmentId === PERSONAL_ONLY_VALUE) {
-        setSelectedDepartmentId(departments[0].id);
-      }
-    }
-  }, [departments, showPersonalOption, selectedDepartmentId]);
+  const requestEpoch = useRef<object | null>(null);
+  const activeInstallationId = useRef<number | null>(installation.installationId);
 
   // Fetch ALL repos from the installation (paginated API calls in background)
-  const fetchAllRepos = useCallback(async () => {
-    setRepoLoading(true);
-    setAllRepos([]);
-    setRepoTotalCount(0);
-    setLoadProgress("");
-
-    try {
-      // First request to get total count
-      const firstResult = await fetchRepos(
-        installation.installationId,
-        1,
-        FETCH_BATCH_SIZE
-      );
+  const fetchAllRepos = useCallback(() => {
+    if (activeInstallationId.current !== installation.installationId) return;
+    const epoch = {};
+    requestEpoch.current = epoch;
+    const isActive = () => requestEpoch.current === epoch
+      && activeInstallationId.current === installation.installationId;
+    return fetchRepos(
+      installation.installationId,
+      1,
+      FETCH_BATCH_SIZE
+    ).then(async (firstResult) => {
+      if (!isActive()) return;
       const total = firstResult.totalCount;
       setRepoTotalCount(total);
 
@@ -149,34 +138,52 @@ export function GitHubRepoBrowser({
       // Fetch remaining pages
       const totalPages = Math.ceil(total / FETCH_BATCH_SIZE);
       for (let p = 2; p <= totalPages; p++) {
+        if (!isActive()) return;
         const result = await fetchRepos(
           installation.installationId,
           p,
           FETCH_BATCH_SIZE
         );
+        if (!isActive()) return;
         accumulated = [...accumulated, ...result.repositories];
         setAllRepos(accumulated);
         setLoadProgress(`${accumulated.length} / ${total}`);
       }
-    } catch (error) {
+    }).catch(() => {
+      if (!isActive()) return;
       toast.error(t("admin.githubImport.fetchReposFailed"));
-    } finally {
+    }).finally(() => {
+      if (!isActive()) return;
       setRepoLoading(false);
       setLoadProgress("");
-    }
+    });
   }, [installation.installationId, fetchRepos, t]);
 
-  // Fetch repos when installation changes
-  useEffect(() => {
+  const [loadedInstallation, setLoadedInstallation] = useState(installation.installationId);
+  if (loadedInstallation !== installation.installationId) {
+    setLoadedInstallation(installation.installationId);
+    setRepoLoading(true);
+    setAllRepos([]);
+    setRepoTotalCount(0);
+    setLoadProgress("");
     setSelectedRepos(new Set());
     setImportResult(null);
+    setImporting(false);
     setSearchQuery("");
     setLanguageFilter("all");
     setImportStatusFilter("all");
     setSelectAllScope("page");
     setPage(1);
+  }
+
+  useEffect(() => {
+    activeInstallationId.current = installation.installationId;
     fetchAllRepos();
-  }, [installation.installationId]);
+    return () => {
+      activeInstallationId.current = null;
+      requestEpoch.current = null;
+    };
+  }, [fetchAllRepos, installation.installationId]);
 
   const toggleRepo = (fullName: string) => {
     setSelectAllScope("page");
@@ -228,10 +235,13 @@ export function GitHubRepoBrowser({
   );
 
   // Reset page and selection scope when filters change
-  useEffect(() => {
+  const filterKey = `${searchQuery}:${languageFilter}:${importStatusFilter}`;
+  const [previousFilterKey, setPreviousFilterKey] = useState(filterKey);
+  if (previousFilterKey !== filterKey) {
+    setPreviousFilterKey(filterKey);
     setPage(1);
     setSelectAllScope("page");
-  }, [searchQuery, languageFilter, importStatusFilter]);
+  }
 
   // Page-level selection helpers
   const importableOnPage = useMemo(
@@ -275,6 +285,9 @@ export function GitHubRepoBrowser({
 
   const handleImport = async () => {
     if (selectedRepos.size === 0 || !isDepartmentValid) return;
+    const epoch = requestEpoch.current;
+    const isActive = () => requestEpoch.current === epoch
+      && activeInstallationId.current === installation.installationId;
 
     setImporting(true);
     setImportResult(null);
@@ -301,22 +314,24 @@ export function GitHubRepoBrowser({
         repos: selectedRepoData,
       });
 
+      if (!isActive()) return;
       setImportResult(result);
       setSelectedRepos(new Set());
       toast.success(
-        t("admin.githubImport.importSuccess")
-          .replace("{imported}", result.imported.toString())
-          .replace("{skipped}", result.skipped.toString())
+        t("admin.githubImport.importSuccess", { imported: result.imported, skipped: result.skipped })
       );
 
       // Refresh repo list to update "already imported" flags
+      setImporting(false);
+      setRepoLoading(true);
       fetchAllRepos();
     } catch (error) {
+      if (!isActive()) return;
       toast.error(
         error instanceof Error ? error.message : t("admin.githubImport.importFailed")
       );
     } finally {
-      setImporting(false);
+      if (isActive()) setImporting(false);
     }
   };
 
@@ -325,18 +340,12 @@ export function GitHubRepoBrowser({
       {/* Card Header Info */}
       <div>
         <h3 className="text-lg font-semibold">
-          {t("admin.githubImport.importFrom").replace(
-            "{org}",
-            installation.accountLogin
-          )}
+          {t("admin.githubImport.importFrom", { org: installation.accountLogin })}
         </h3>
         <p className="text-sm text-muted-foreground">
           {repoLoading && loadProgress
             ? `${t("admin.githubImport.loadingRepos")} ${loadProgress}...`
-            : t("admin.githubImport.totalRepos").replace(
-                "{count}",
-                repoTotalCount.toString()
-              )}
+            : t("admin.githubImport.totalRepos", { count: repoTotalCount })}
         </p>
       </div>
 
@@ -377,7 +386,7 @@ export function GitHubRepoBrowser({
                 <SelectValue />
               </SelectTrigger>
             <SelectContent>
-              {wikiLanguageCodes.map((lang) => (
+              {defaultWikiLanguages.split(",").map((lang) => (
                 <SelectItem key={lang} value={lang}>
                   {t(`common.languageNames.${lang}`)}
                 </SelectItem>
@@ -448,21 +457,21 @@ export function GitHubRepoBrowser({
         {allPageSelected && hasMoreBeyondPage && selectAllScope === "page" && (
           <div className="mt-1 py-1.5 px-3 bg-blue-50 dark:bg-blue-950 text-sm text-center rounded">
             <span className="text-blue-800 dark:text-blue-200">
-              {t("admin.githubImport.allPageSelected").replace("{count}", importableOnPage.length.toString())}
+              {t("admin.githubImport.allPageSelected", { count: importableOnPage.length })}
             </span>{" "}
             <button
               type="button"
               className="text-blue-600 dark:text-blue-400 font-medium hover:underline"
               onClick={handleSelectAllMatching}
             >
-              {t("admin.githubImport.selectAllMatching").replace("{count}", importableFiltered.length.toString())}
+              {t("admin.githubImport.selectAllMatching", { count: importableFiltered.length })}
             </button>
           </div>
         )}
         {selectAllScope === "all" && (
           <div className="mt-1 py-1.5 px-3 bg-blue-50 dark:bg-blue-950 text-sm text-center rounded">
             <span className="text-blue-800 dark:text-blue-200">
-              {t("admin.githubImport.allMatchingSelected").replace("{count}", importableFiltered.length.toString())}
+              {t("admin.githubImport.allMatchingSelected", { count: importableFiltered.length })}
             </span>{" "}
             <button
               type="button"
@@ -582,10 +591,7 @@ export function GitHubRepoBrowser({
       <div className="flex items-center justify-between pt-4 border-t">
         <span className="text-sm text-muted-foreground">
           {selectedRepos.size > 0
-            ? t("admin.githubImport.readyToImport").replace(
-                "{count}",
-                selectedRepos.size.toString()
-              )
+            ? t("admin.githubImport.readyToImport", { count: selectedRepos.size })
             : t("admin.githubImport.selectReposPrompt")}
         </span>
         <Button
@@ -601,10 +607,7 @@ export function GitHubRepoBrowser({
           )}
           {importing
             ? t("admin.githubImport.importing")
-            : t("admin.githubImport.importButton").replace(
-                "{count}",
-                selectedRepos.size.toString()
-              )}
+            : t("admin.githubImport.importButton", { count: selectedRepos.size })}
         </Button>
       </div>
 

@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { AppLayout } from "@/components/app-layout";
 import { Button } from "@/components/ui/button";
@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useTranslations } from "@/hooks/use-translations";
 import { useAuth } from "@/contexts/auth-context";
 import { getUserSettings, updateUserSettings, UserSettings, getSystemVersion, SystemVersion, getUserApiKeys, createUserApiKey, revokeUserApiKey, UserApiKeyListItem, UserApiKeyCreateResult } from "@/lib/profile-api";
-import { Loader2, Settings, Bell, Globe, Palette, ArrowLeft, Key, Plus, Trash2, Copy, Check, AlertTriangle } from "lucide-react";
+import { Loader2, Bell, Globe, Palette, ArrowLeft, Key, Plus, Trash2, Copy, Check, AlertTriangle } from "lucide-react";
 import { uiLocales } from "@/i18n/config";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -40,7 +40,7 @@ export default function SettingsPage() {
 
   // API Keys state
   const [apiKeys, setApiKeys] = useState<UserApiKeyListItem[]>([]);
-  const [apiKeysLoading, setApiKeysLoading] = useState(false);
+  const [apiKeysLoading, setApiKeysLoading] = useState(true);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [newKeyName, setNewKeyName] = useState("");
   const [newKeyExpiry, setNewKeyExpiry] = useState("");
@@ -57,36 +57,19 @@ export default function SettingsPage() {
     }
   }, [authLoading, isAuthenticated, router]);
 
-  useEffect(() => {
-    if (isAuthenticated) {
-      loadSettings();
-      loadApiKeys();
-    }
-  }, [isAuthenticated]);
-
-  useEffect(() => {
-    loadSystemVersion();
+  const loadSettings = useCallback(() => {
+    return getUserSettings().then(setSettings).catch(() => {
+      // 使用默认设置
+    }).finally(() => {
+      setIsLoading(false);
+    });
   }, []);
 
-  const loadSettings = async () => {
-    try {
-      const data = await getUserSettings();
-      setSettings(data);
-    } catch {
-      // 使用默认设置
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const loadSystemVersion = async () => {
-    try {
-      const data = await getSystemVersion();
-      setSystemVersion(data);
-    } catch {
+  useEffect(() => {
+    getSystemVersion().then(setSystemVersion).catch(() => {
       // 使用默认版本
-    }
-  };
+    });
+  }, []);
 
   const handleSave = async () => {
     setIsSaving(true);
@@ -110,17 +93,20 @@ export default function SettingsPage() {
     // 语言切换由 LanguageToggle 组件处理，这里只保存设置
   };
 
-  const loadApiKeys = async () => {
-    setApiKeysLoading(true);
-    try {
-      const data = await getUserApiKeys();
-      setApiKeys(data);
-    } catch {
+  const loadApiKeys = useCallback(() => {
+    return getUserApiKeys().then(setApiKeys).catch(() => {
       toast.error(t("settings.apiKeys.fetchFailed"));
-    } finally {
+    }).finally(() => {
       setApiKeysLoading(false);
+    });
+  }, [t]);
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      void loadSettings();
+      void loadApiKeys();
     }
-  };
+  }, [isAuthenticated, loadSettings, loadApiKeys]);
 
   const handleCreateKey = async () => {
     if (!newKeyName.trim()) {
@@ -140,6 +126,7 @@ export default function SettingsPage() {
       setShowKeyReveal(true);
       setNewKeyName("");
       setNewKeyExpiry("");
+      setApiKeysLoading(true);
       await loadApiKeys();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : t("settings.apiKeys.createFailed"));
@@ -155,6 +142,7 @@ export default function SettingsPage() {
       await revokeUserApiKey(revokeTarget.id);
       toast.success(t("settings.apiKeys.revoked"));
       setRevokeTarget(null);
+      setApiKeysLoading(true);
       await loadApiKeys();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : t("settings.apiKeys.revokeFailed"));

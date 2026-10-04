@@ -50,7 +50,7 @@ export function ChatAssistant({
     }
 
     checkEnabled()
-  }, [])
+  }, [t])
 
   const handleToggle = React.useCallback(() => {
     setIsOpen(prev => !prev)

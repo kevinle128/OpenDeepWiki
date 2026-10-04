@@ -50,6 +50,9 @@ docker compose -f compose.pgsql.yaml up -d --build
 
 该编排中后端在数据库健康检查通过后才启动，默认连接串为 `Host=postgres;Port=5432;Database=opendeepwiki;Username=postgres;Password=opendeepwiki123`（生产环境请修改）。
 
+PostgreSQL 只通过 Compose 内部网络提供服务，不占用宿主机的 `5432` 端口。
+需要执行数据库命令时，使用 `docker compose -f compose.pgsql.yaml exec postgres psql -U postgres -d opendeepwiki`。
+
 ### 自定义 Docker Compose
 
 将 PostgreSQL 服务添加到你的 `compose.yaml`：
@@ -65,8 +68,6 @@ services:
       - POSTGRES_PASSWORD=your-secure-password
     volumes:
       - pgdata:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
 
   opendeepwiki:
     # ... 其他配置 ...

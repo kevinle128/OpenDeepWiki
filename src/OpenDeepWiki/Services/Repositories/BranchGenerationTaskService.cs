@@ -68,18 +68,7 @@ public sealed class BranchGenerationTaskService(
             return new BranchGenerationTaskResult(false, activeBranchTask, "BRANCH_GENERATION_ACTIVE", "已有进行中的 branch 生成任务");
         }
 
-        var task = new BranchGenerationTask
-        {
-            Id = Guid.NewGuid().ToString(),
-            RepositoryId = repositoryId,
-            BranchId = branchId,
-            Status = BranchGenerationTaskStatus.Pending,
-            Mode = BranchGenerationTaskMode.Full,
-            Priority = priority,
-            IsManualTrigger = true,
-            RequestedBy = requestedBy,
-            CreatedAt = DateTime.UtcNow
-        };
+        var task = NewFullGenerationTask(repositoryId, branchId, requestedBy, priority);
 
         await using var transaction = await EfContextTransaction.BeginIfSupportedAsync(context, cancellationToken);
         var lockAcquired = await lockService.TryAcquireAsync(
@@ -88,7 +77,8 @@ public sealed class BranchGenerationTaskService(
             RepositoryGenerationLockOwnerType.BranchTask,
             task.Id,
             RepositoryGenerationLockScope.Branch,
-            cancellationToken);
+            cancellationToken,
+            branchId: branchId);
 
         if (!lockAcquired)
         {
@@ -100,16 +90,11 @@ public sealed class BranchGenerationTaskService(
             return new BranchGenerationTaskResult(
                 false,
                 ErrorCode: "GENERATION_LOCK_CONFLICT",
-                ErrorMessage: "仓库已有生成任务正在排队或处理中",
-                ActiveLock: await lockService.GetLockAsync(repositoryId, cancellationToken));
+                ErrorMessage: "该分支或仓库已有生成任务正在排队或处理中",
+                ActiveLock: await lockService.GetLockAsync(repositoryId, cancellationToken, branchId));
         }
 
-        branch.GenerationStatus = BranchGenerationTaskStatus.Pending;
-        branch.LastGenerationTaskId = task.Id;
-        branch.LastGenerationError = null;
-        branch.LastGenerationStartedAt = null;
-        branch.LastGenerationCompletedAt = null;
-        branch.UpdateTimestamp();
+        MarkBranchQueued(branch, task.Id);
 
         context.BranchGenerationTasks.Add(task);
         context.RepositoryBranches.Update(branch);
@@ -135,7 +120,8 @@ public sealed class BranchGenerationTaskService(
                     repositoryId,
                     RepositoryGenerationLockOwnerType.BranchTask,
                     task.Id,
-                    CancellationToken.None);
+                    CancellationToken.None,
+                    branchId);
             }
 
             throw;
@@ -161,6 +147,16 @@ public sealed class BranchGenerationTaskService(
             return new BranchGenerationTaskResult(false, task, "INVALID_TASK_STATUS", $"只能重试 Failed/Cancelled 任务，当前状态: {task.Status}");
         }
 
+        var branch = await context.RepositoryBranches
+            .FirstOrDefaultAsync(
+                item => item.Id == task.BranchId && item.RepositoryId == task.RepositoryId && !item.IsDeleted,
+                cancellationToken);
+
+        if (branch is null)
+        {
+            return new BranchGenerationTaskResult(false, task, "BRANCH_NOT_FOUND", "分支不存在");
+        }
+
         var activeBranchTask = await FindActiveBranchTaskAsync(task.RepositoryId, task.BranchId, cancellationToken);
         if (activeBranchTask is not null)
         {
@@ -174,7 +170,8 @@ public sealed class BranchGenerationTaskService(
             RepositoryGenerationLockOwnerType.BranchTask,
             task.Id,
             RepositoryGenerationLockScope.Branch,
-            cancellationToken);
+            cancellationToken,
+            branchId: task.BranchId);
 
         if (!lockAcquired)
         {
@@ -187,16 +184,8 @@ public sealed class BranchGenerationTaskService(
                 false,
                 task,
                 "GENERATION_LOCK_CONFLICT",
-                "仓库已有生成任务正在排队或处理中",
-                await lockService.GetLockAsync(task.RepositoryId, cancellationToken));
-        }
-
-        var branch = await context.RepositoryBranches
-            .FirstOrDefaultAsync(item => item.Id == task.BranchId && !item.IsDeleted, cancellationToken);
-
-        if (branch is null)
-        {
-            return new BranchGenerationTaskResult(false, task, "BRANCH_NOT_FOUND", "分支不存在");
+                "该分支或仓库已有生成任务正在排队或处理中",
+                await lockService.GetLockAsync(task.RepositoryId, cancellationToken, task.BranchId));
         }
 
         await branchCleaner.CleanAsync(context, branch, cancellationToken);
@@ -232,7 +221,8 @@ public sealed class BranchGenerationTaskService(
                     task.RepositoryId,
                     RepositoryGenerationLockOwnerType.BranchTask,
                     task.Id,
-                    CancellationToken.None);
+                    CancellationToken.None,
+                    task.BranchId);
             }
 
             throw;
@@ -278,10 +268,35 @@ public sealed class BranchGenerationTaskService(
             task.RepositoryId,
             RepositoryGenerationLockOwnerType.BranchTask,
             task.Id,
-            cancellationToken);
+            cancellationToken,
+            task.BranchId);
 
         await context.SaveChangesAsync(cancellationToken);
         return new BranchGenerationTaskResult(true, task);
+    }
+
+    internal static BranchGenerationTask NewFullGenerationTask(
+        string repositoryId, string branchId, string? requestedBy, int priority) => new()
+    {
+        Id = Guid.NewGuid().ToString(),
+        RepositoryId = repositoryId,
+        BranchId = branchId,
+        Status = BranchGenerationTaskStatus.Pending,
+        Mode = BranchGenerationTaskMode.Full,
+        Priority = priority,
+        IsManualTrigger = true,
+        RequestedBy = requestedBy,
+        CreatedAt = DateTime.UtcNow
+    };
+
+    internal static void MarkBranchQueued(RepositoryBranch branch, string taskId)
+    {
+        branch.GenerationStatus = BranchGenerationTaskStatus.Pending;
+        branch.LastGenerationTaskId = taskId;
+        branch.LastGenerationError = null;
+        branch.LastGenerationStartedAt = null;
+        branch.LastGenerationCompletedAt = null;
+        branch.UpdateTimestamp();
     }
 
     private async Task<BranchGenerationTask?> FindActiveBranchTaskAsync(
@@ -292,6 +307,7 @@ public sealed class BranchGenerationTaskService(
         return await context.BranchGenerationTasks
             .Where(item => !item.IsDeleted &&
                            item.RepositoryId == repositoryId &&
+                           item.BranchId == branchId &&
                            (item.Status == BranchGenerationTaskStatus.Pending ||
                             item.Status == BranchGenerationTaskStatus.Processing))
             .OrderByDescending(item => item.Priority)

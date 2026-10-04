@@ -207,26 +207,29 @@ export default function AdminAiModelsPage() {
   const [modelDialog, setModelDialog] = useState<AiModelConfig | null | "new">(null);
   const [modelForm, setModelForm] = useState(emptyModelForm);
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const [providerData, modelData] = await Promise.all([
+  const loadData = useCallback(() => {
+    return Promise.all([
         getAiProviders(),
         getAiModels(),
-      ]);
+      ]).then(([providerData, modelData]) => {
       setProviders(providerData);
       setModels(modelData);
-    } catch (error) {
+    }).catch(error => {
       console.error(error);
       toast.error(t("admin.models.toasts.loadFailed"));
-    } finally {
+    }).finally(() => {
       setLoading(false);
-    }
+    });
   }, [t]);
 
+  const fetchData = useCallback(() => {
+    setLoading(true);
+    return loadData();
+  }, [loadData]);
+
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    void loadData();
+  }, [loadData]);
 
   const providerById = useMemo(() => {
     return new Map(providers.map((provider) => [provider.id, provider]));

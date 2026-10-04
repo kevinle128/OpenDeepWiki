@@ -290,6 +290,81 @@ public class IncrementalUpdateWorkerTests
         Assert.Empty(await context.IncrementalUpdateTasks.ToListAsync());
     }
 
+    [Fact]
+    public async Task CheckScheduledUpdatesAsync_ForAProviderRepository_RefreshesVisibilityThroughTheProviderProbeOnly()
+    {
+        using var context = CreateContext();
+        var repository = SeedRepository(context, updateIntervalMinutes: 60, lastUpdateCheckAt: DateTime.UtcNow.AddHours(-2), gitUrl: "https://gitlab.com/acme/widgets.git");
+        repository.IsPublic = true;
+        repository.Provider = GitProvider.GitLab;
+        repository.ProviderBaseUrl = "https://gitlab.com";
+        repository.ProviderRepositoryId = "42";
+        repository.GitConnectionId = "connection-1";
+        await context.SaveChangesAsync();
+        var probe = new Mock<IRepositoryVisibilityProbe>();
+        probe.Setup(x => x.GetIsPublicAsync(repository, It.IsAny<CancellationToken>())).ReturnsAsync(false);
+        var gitPlatform = new Mock<IGitPlatformService>(MockBehavior.Strict);
+
+        await InvokeCheckScheduledUpdatesAsync(CreateWorker(), context, gitPlatform.Object, Mock.Of<IRepositoryAnalyzer>(), probe.Object);
+
+        Assert.False((await context.Repositories.SingleAsync()).IsPublic);
+        probe.Verify(x => x.GetIsPublicAsync(repository, It.IsAny<CancellationToken>()), Times.Once);
+        gitPlatform.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task CheckScheduledUpdatesAsync_WhenTheProviderCannotAnswer_KeepsTheStoredVisibility()
+    {
+        using var context = CreateContext();
+        var repository = SeedRepository(context, updateIntervalMinutes: 60, lastUpdateCheckAt: DateTime.UtcNow.AddHours(-2), gitUrl: "https://gitlab.com/acme/widgets.git");
+        repository.IsPublic = false;
+        repository.Provider = GitProvider.GitLab;
+        repository.ProviderBaseUrl = "https://gitlab.com";
+        repository.ProviderRepositoryId = "42";
+        repository.GitConnectionId = "connection-1";
+        await context.SaveChangesAsync();
+        var probe = new Mock<IRepositoryVisibilityProbe>();
+        probe.Setup(x => x.GetIsPublicAsync(It.IsAny<Repository>(), It.IsAny<CancellationToken>())).ReturnsAsync((bool?)null);
+
+        await InvokeCheckScheduledUpdatesAsync(
+            CreateWorker(), context, new Mock<IGitPlatformService>(MockBehavior.Strict).Object, Mock.Of<IRepositoryAnalyzer>(), probe.Object);
+
+        Assert.False((await context.Repositories.SingleAsync()).IsPublic);
+    }
+
+    [Theory]
+    [InlineData("https://gitlab.com/acme/widgets.git")]
+    [InlineData("https://gitee.com/acme/widgets.git")]
+    [InlineData("https://git.corp.example/acme/widgets.git")]
+    public async Task CheckScheduledUpdatesAsync_ForALegacyRepositoryOutsideGitHub_NeverAsksTheGitHubChecker(string gitUrl)
+    {
+        using var context = CreateContext();
+        SeedRepository(context, updateIntervalMinutes: 60, lastUpdateCheckAt: DateTime.UtcNow.AddHours(-2), gitUrl: gitUrl);
+        await context.SaveChangesAsync();
+        var gitPlatform = new Mock<IGitPlatformService>(MockBehavior.Strict);
+
+        await InvokeCheckScheduledUpdatesAsync(CreateWorker(), context, gitPlatform.Object, Mock.Of<IRepositoryAnalyzer>());
+
+        gitPlatform.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task CheckScheduledUpdatesAsync_ForALegacyGitHubRepository_StillUsesTheGitHubChecker()
+    {
+        using var context = CreateContext();
+        var repository = SeedRepository(context, updateIntervalMinutes: 60, lastUpdateCheckAt: DateTime.UtcNow.AddHours(-2), gitUrl: "https://github.com/demo/repo.git");
+        repository.IsPublic = true;
+        await context.SaveChangesAsync();
+        var gitPlatform = new Mock<IGitPlatformService>();
+        gitPlatform
+            .Setup(x => x.CheckRepoExistsAsync("demo", "repo"))
+            .ReturnsAsync(new GitRepoInfo(true, "repo", null, "main", 0, 0, null, null, IsPrivate: true));
+
+        await InvokeCheckScheduledUpdatesAsync(CreateWorker(), context, gitPlatform.Object, Mock.Of<IRepositoryAnalyzer>());
+
+        Assert.False((await context.Repositories.SingleAsync()).IsPublic);
+    }
+
     private static IncrementalUpdateWorker CreateWorker(IncrementalUpdateOptions? options = null)
     {
         return new IncrementalUpdateWorker(
@@ -309,7 +384,8 @@ public class IncrementalUpdateWorkerTests
         IncrementalUpdateWorker worker,
         TestDbContext context,
         IGitPlatformService gitPlatformService,
-        IRepositoryAnalyzer analyzer)
+        IRepositoryAnalyzer analyzer,
+        IRepositoryVisibilityProbe? visibilityProbe = null)
     {
         var method = typeof(IncrementalUpdateWorker).GetMethod(
             "CheckScheduledUpdatesAsync",
@@ -317,7 +393,7 @@ public class IncrementalUpdateWorkerTests
 
         Assert.NotNull(method);
 
-        var task = (Task?)method!.Invoke(worker, [context, gitPlatformService, analyzer, CancellationToken.None]);
+        var task = (Task?)method!.Invoke(worker, [context, gitPlatformService, analyzer, visibilityProbe, CancellationToken.None]);
         Assert.NotNull(task);
         await task!;
     }

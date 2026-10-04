@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -6,6 +7,7 @@ using OpenDeepWiki.EFCore;
 using OpenDeepWiki.Entities;
 using OpenDeepWiki.Models;
 using OpenDeepWiki.Services.Auth;
+using OpenDeepWiki.Services.GitConnections;
 using OpenDeepWiki.Services.GitHub;
 using OpenDeepWiki.Services.Organizations;
 
@@ -21,12 +23,27 @@ public class RepositoryService(
     IOrganizationService organizationService,
     IRepositoryFullRegenerationCleaner fullRegenerationCleaner,
     IRepositoryGenerationLockService generationLockService,
-    IOptions<RepositoryAnalyzerOptions> repositoryOptions)
+    IOptions<RepositoryAnalyzerOptions> repositoryOptions,
+    IGitCredentialResolver credentialResolver,
+    IGitConnectionAuthorizationService connectionAuthorization,
+    IBranchActionAuditor branchActionAuditor)
 {
     [HttpPost("/submit")]
     public async Task<Repository> SubmitAsync([FromBody] RepositorySubmitRequest request)
     {
         var currentUserId = GetCurrentUserId();
+
+        // New credentials never enter through this route. The checks run before anything else, so a secret that
+        // arrives in the old fields or in the URL is neither stored nor repeated in an error.
+        if (!string.IsNullOrWhiteSpace(request.AuthAccount) || !string.IsNullOrWhiteSpace(request.AuthPassword))
+        {
+            throw RepositoryConnectionRequestException.LegacyCredentialFields();
+        }
+
+        if (HasUserInfo(request.GitUrl))
+        {
+            throw RepositoryConnectionRequestException.UrlWithCredentials();
+        }
 
         var branchName = NormalizeBranchName(request.BranchName);
 
@@ -58,7 +75,8 @@ public class RepositoryService(
                 request.LanguageCode);
         }
 
-        if (!request.IsPublic && string.IsNullOrWhiteSpace(request.AuthAccount) && string.IsNullOrWhiteSpace(request.AuthPassword))
+        var connection = await ResolveSubmitConnectionAsync(request);
+        if (!request.IsPublic && connection is null)
         {
             throw new InvalidOperationException("仓库凭据为空时不允许设置为私有");
         }
@@ -67,7 +85,7 @@ public class RepositoryService(
         int starCount = 0;
         int forkCount = 0;
         
-        if (string.IsNullOrWhiteSpace(request.AuthPassword) && IsPublicPlatform(request.GitUrl))
+        if (connection is null && IsPublicPlatform(request.GitUrl))
         {
             var stats = await gitPlatformService.GetRepoStatsAsync(request.GitUrl);
             if (stats != null)
@@ -97,11 +115,47 @@ public class RepositoryService(
             request.LanguageCode,
             effectiveIsPublic,
             request.GenerateSkill,
-            request.AuthAccount,
-            request.AuthPassword,
+            connection,
             starCount,
             forkCount);
     }
+
+    /// <summary>
+    /// Finds the connection that a submit names. It must exist, be enabled, be usable by the caller, and belong to the
+    /// Git server of the repository URL, so a credential never reaches another host.
+    /// </summary>
+    private async Task<GitConnection?> ResolveSubmitConnectionAsync(RepositorySubmitRequest request)
+    {
+        var connectionId = request.GitConnectionId?.Trim();
+        if (string.IsNullOrEmpty(connectionId))
+        {
+            return null;
+        }
+
+        var connection = await context.GitConnections
+            .AsNoTracking()
+            .FirstOrDefaultAsync(item => item.Id == connectionId && !item.IsDeleted)
+            ?? throw RepositoryConnectionRequestException.ConnectionNotFound();
+        if (!connection.IsEnabled)
+        {
+            throw RepositoryConnectionRequestException.ConnectionDisabled();
+        }
+
+        if (!connectionAuthorization.CanUse(connection))
+        {
+            throw RepositoryConnectionRequestException.ConnectionNotFound();
+        }
+
+        if (!GitRemoteOriginGuard.IsSameOrigin(request.GitUrl, connection.NormalizedServerUrl))
+        {
+            throw RepositoryConnectionRequestException.ConnectionHostMismatch();
+        }
+
+        return connection;
+    }
+
+    private static bool HasUserInfo(string? gitUrl)
+        => Uri.TryCreate(gitUrl, UriKind.Absolute, out var uri) && !string.IsNullOrEmpty(uri.UserInfo);
 
     // Mapped manually in RepositoryUploadEndpoints: the MiniApi source generator drops the
     // [FromForm] binding and treats the request as a JSON body, which makes multipart uploads
@@ -143,7 +197,6 @@ public class RepositoryService(
             request.IsPublic,
             request.GenerateSkill,
             null,
-            null,
             0,
             0);
     }
@@ -170,7 +223,6 @@ public class RepositoryService(
             request.LanguageCode,
             request.IsPublic,
             request.GenerateSkill,
-            null,
             null,
             0,
             0);
@@ -310,13 +362,15 @@ public class RepositoryService(
                     Id = r.Id,
                     OrgName = r.OrgName,
                     RepoName = r.RepoName,
-                    GitUrl = r.SourceLocation,
+                    GitUrl = RepositorySource.RedactUserInfo(r.SourceLocation),
                     SourceType = r.SourceType,
-                    SourceLocation = r.SourceLocation,
+                    SourceLocation = RepositorySource.RedactUserInfo(r.SourceLocation),
                     Status = r.Status,
                     IsPublic = r.IsPublic,
                     GenerateSkill = r.GenerateSkill,
-                    HasPassword = !string.IsNullOrWhiteSpace(r.AuthPassword),
+                    HasPassword = GitCredentialResolver.HasStoredCredential(r),
+                    HasGitConnection = !string.IsNullOrWhiteSpace(r.GitConnectionId),
+                    GitConnectionId = r.GitConnectionId,
                     CreatedAt = r.CreatedAt,
                     UpdatedAt = r.UpdatedAt,
                     StarCount = r.StarCount,
@@ -395,8 +449,8 @@ public class RepositoryService(
                 }
             }
 
-            // 无密码仓库不能设为私有
-            if (!request.IsPublic && string.IsNullOrWhiteSpace(repository.AuthPassword))
+            // 无可用凭据的仓库不能设为私有：连接必须存在、已启用且可解密；没有连接时看旧密码
+            if (!request.IsPublic && !await credentialResolver.HasUsableCredentialAsync(repository))
             {
                 return Results.BadRequest(new UpdateVisibilityResponse
                 {
@@ -535,6 +589,7 @@ public class RepositoryService(
     /// 获取仓库分支列表（从Git平台API获取）
     /// </summary>
     [HttpGet("/branches")]
+    [Authorize]
     public async Task<GitBranchesResponse> GetBranchesAsync([FromQuery] string gitUrl)
     {
         if (string.IsNullOrWhiteSpace(gitUrl))
@@ -581,8 +636,7 @@ public class RepositoryService(
         string languageCode,
         bool isPublic,
         bool generateSkill,
-        string? authAccount,
-        string? authPassword,
+        GitConnection? connection,
         int starCount,
         int forkCount)
     {
@@ -616,8 +670,9 @@ public class RepositoryService(
             GitUrl = storedSource,
             RepoName = repoName,
             OrgName = orgName,
-            AuthAccount = authAccount,
-            AuthPassword = authPassword,
+            GitConnectionId = connection?.Id,
+            Provider = connection?.Provider,
+            ProviderBaseUrl = connection?.NormalizedServerUrl,
             IsPublic = isPublic,
             GenerateSkill = generateSkill,
             Status = RepositoryStatus.Pending,
@@ -645,6 +700,8 @@ public class RepositoryService(
         context.Repositories.Add(repository);
         context.RepositoryBranches.Add(branch);
         context.BranchLanguages.Add(language);
+        // The audit event commits with the repository, so an assignment is never stored without its record.
+        branchActionAuditor.Stage(repository, currentUserId, GitConnectionAuditEventType.RepositoryAssigned);
 
         await context.SaveChangesAsync();
         return repository;

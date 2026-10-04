@@ -64,12 +64,13 @@ export default function GlobalError() {
       <p className="mt-3 text-sm text-muted-foreground">
         {copy.description}
       </p>
-      <a
-        href="/"
+      <button
+        type="button"
+        onClick={() => window.location.assign(new URL("/", window.location.origin))}
         className="mt-6 inline-flex h-10 items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
       >
         {copy.back}
-      </a>
+      </button>
     </main>
   );
 }
