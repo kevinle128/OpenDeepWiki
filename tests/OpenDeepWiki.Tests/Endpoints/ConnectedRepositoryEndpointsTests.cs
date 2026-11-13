@@ -441,6 +441,7 @@ public sealed class ConnectedRepositoryEndpointsTests : IAsyncLifetime
             organizationService: Mock.Of<IOrganizationService>(),
             fullRegenerationCleaner: null!,
             generationLockService: null!,
+            cache: new OpenDeepWiki.Cache.Memory.MemoryCacheAdapter(new Microsoft.Extensions.Caching.Memory.MemoryCache(new Microsoft.Extensions.Caching.Memory.MemoryCacheOptions())),
             repositoryOptions: Options.Create(new RepositoryAnalyzerOptions()),
             credentialResolver: new GitCredentialResolver(
                 visibilityContext, _protector, Microsoft.Extensions.Logging.Abstractions.NullLogger<GitCredentialResolver>.Instance),

@@ -63,7 +63,7 @@ spec:
     jwt_secret_key:
       description: 'JWT 密钥（至少 32 字节；Production 环境拒绝内置默认值，默认随机生成，部署后请勿随意更换）'
       type: string
-      default: ${{ defaults.jwt_secret }}
+      default: ${{ random(48) }}
       required: true
     
     # 全局 AI 配置（用于 Chat 等功能）

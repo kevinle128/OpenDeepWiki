@@ -56,6 +56,7 @@ public sealed class LegacySubmitRouteTests : IAsyncLifetime
                     Mock.Of<IOrganizationService>(),
                     new RepositoryFullRegenerationCleaner(),
                     new RepositoryGenerationLockService(context),
+                    new OpenDeepWiki.Cache.Memory.MemoryCacheAdapter(new Microsoft.Extensions.Caching.Memory.MemoryCache(new Microsoft.Extensions.Caching.Memory.MemoryCacheOptions())),
                     Options.Create(new RepositoryAnalyzerOptions()),
                     new GitCredentialResolver(context, protector, NullLogger<GitCredentialResolver>.Instance),
                     new GitConnectionAuthorizationService(userContext, context),

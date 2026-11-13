@@ -63,6 +63,8 @@ cp .env.example .env
 services:
   opendeepwiki:
     environment:
+      - JWT_SECRET_KEY=<output of: openssl rand -base64 48>
+
       - CHAT_API_KEY=your-chat-api-key
       - ENDPOINT=https://api.openai.com/v1
       - CHAT_REQUEST_TYPE=OpenAI

@@ -64,6 +64,7 @@ public sealed class LegacyBranchRouteAuthorizationTests
             organizationService: null!,
             fullRegenerationCleaner: null!,
             generationLockService: null!,
+            cache: null!,
             repositoryOptions: Options.Create(new RepositoryAnalyzerOptions()),
             credentialResolver: null!,
             connectionAuthorization: null!,
