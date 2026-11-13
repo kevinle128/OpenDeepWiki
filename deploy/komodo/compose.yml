@@ -1,0 +1,98 @@
+# Compose stack for OpenDeepWiki on Komodo (VTC dev server). Komodo clones this
+# repository, writes the stack environment to an env file next to this file,
+# then runs `docker compose build` and `docker compose up -d`. Both images are
+# built on the server and exist on no registry, so `compose pull` must skip them.
+#
+# Stack environment. [[NAME]] is a secret Komodo Variable; keep secrets there.
+#   OPENDEEPWIKI_JWT_SECRET_KEY      required, secret: [[OPENDEEPWIKI_JWT_SECRET_KEY]].
+#                                    At least 32 bytes. Changing it signs out every user.
+#   OPENDEEPWIKI_DB_PASSWORD         required, secret: [[OPENDEEPWIKI_DB_PASSWORD]].
+#                                    Postgres reads it only when the volume is empty.
+#   OPENDEEPWIKI_DATA_DIR            required. Absolute host path mounted at /data
+#                                    (cloned repositories and the Data Protection key
+#                                    ring). A relative path would resolve inside the
+#                                    Komodo Periphery container, not on the host.
+#   SITE_URL                         default http://localhost:3000.
+#   WIKI_LANGUAGES                   default en,vi.
+#   WIKI_PARALLEL_COUNT              default 5.
+#   WIKI_MAX_CONCURRENT_GENERATIONS  default 1.
+#   OPENDEEPWIKI_API_PORT            host port of the API, default 8080.
+#   OPENDEEPWIKI_WEB_PORT            host port of the web UI, default 3000.
+#
+# AI providers and models are configured in the admin UI and stored in the database.
+name: opendeepwiki
+
+services:
+  opendeepwiki:
+    build:
+      context: ../..
+      dockerfile: src/OpenDeepWiki/Dockerfile
+    image: opendeepwiki:komodo
+    pull_policy: never
+    container_name: opendeepwiki
+    restart: unless-stopped
+    # Root: the files under the data directory are owned by root.
+    user: "0:0"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${OPENDEEPWIKI_API_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      URLS: http://+:8080
+      Database__Type: postgresql
+      ConnectionStrings__Default: Host=postgres;Port=5432;Database=opendeepwiki;Username=postgres;Password=${OPENDEEPWIKI_DB_PASSWORD:?set OPENDEEPWIKI_DB_PASSWORD}
+      JWT_SECRET_KEY: ${OPENDEEPWIKI_JWT_SECRET_KEY:?set OPENDEEPWIKI_JWT_SECRET_KEY}
+      # The key ring must persist: without it, saved Git credentials cannot be decrypted.
+      DataProtection__KeyRingPath: /data/dataprotection-keys
+      REPOSITORIES_DIRECTORY: /data
+      WIKI_PARALLEL_COUNT: ${WIKI_PARALLEL_COUNT:-5}
+      WIKI_MAX_CONCURRENT_GENERATIONS: ${WIKI_MAX_CONCURRENT_GENERATIONS:-1}
+      WIKI_LANGUAGES: ${WIKI_LANGUAGES:-en,vi}
+    volumes:
+      - ${OPENDEEPWIKI_DATA_DIR:?set OPENDEEPWIKI_DATA_DIR}:/data
+
+  web:
+    build:
+      context: ../../web
+      dockerfile: Dockerfile
+    image: opendeepwiki-web:komodo
+    pull_policy: never
+    container_name: opendeepwiki-web
+    restart: unless-stopped
+    depends_on:
+      opendeepwiki:
+        condition: service_healthy
+    ports:
+      - "${OPENDEEPWIKI_WEB_PORT:-3000}:3000"
+    environment:
+      NODE_ENV: production
+      SITE_URL: ${SITE_URL:-http://localhost:3000}
+      API_PROXY_URL: http://opendeepwiki:8080
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: opendeepwiki-postgres
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d opendeepwiki"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    environment:
+      POSTGRES_DB: opendeepwiki
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${OPENDEEPWIKI_DB_PASSWORD:?set OPENDEEPWIKI_DB_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+volumes:
+  postgres-data:
