@@ -160,13 +160,14 @@ public class McpGlobalTools
         });
     }
 
-    [McpServerTool, Description("Search generated wiki documentation. If owner/repo are omitted, routes the query to relevant repositories first and searches across them.")]
+    [McpServerTool, Description("Search generated wiki documentation. If owner/repo are omitted, routes the query to relevant repositories first and searches across them. Each wiki belongs to one branch: pass branch to search only that branch's wiki; every result names its branch.")]
     public static async Task<string> SearchDocs(
         IContext context,
         [Description("User question or search query.")] string query,
         [Description("Optional repository owner/org. If omitted, relevant repositories are selected automatically.")] string? owner = null,
         [Description("Optional repository name. If omitted, relevant repositories are selected automatically.")] string? repo = null,
         [Description("Preferred wiki language code. Default: zh. Pass empty to search every language.")] string language = "zh",
+        [Description("Optional branch whose wiki to search, for example dev or main. If omitted, the wikis of every branch are searched. Each result names its branch.")] string? branch = null,
         [Description("Maximum routed repositories when owner/repo are omitted. Default: 5, max: 20.")] int maxRepositories = 5,
         [Description("Maximum document results. Default: 10, max: 50.")] int maxResults = 10,
         CancellationToken cancellationToken = default)
@@ -182,6 +183,7 @@ public class McpGlobalTools
         var normalizedOwner = Normalize(owner);
         var normalizedRepo = Normalize(repo);
         var normalizedLanguage = Normalize(language);
+        var normalizedBranch = Normalize(branch);
         var tokens = Tokenize(normalizedQuery);
 
         List<RepositoryRouteResult> routedRepositories;
@@ -227,6 +229,7 @@ public class McpGlobalTools
             {
                 query = normalizedQuery,
                 language = normalizedLanguage,
+                branch = normalizedBranch,
                 routedRepositories,
                 count = 0,
                 results = Array.Empty<object>()
@@ -238,8 +241,29 @@ public class McpGlobalTools
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         var documents = await LoadDocumentSearchRowsAsync(context, normalizedLanguage, cancellationToken);
-        var scoredDocuments = documents
+        var routedDocuments = documents
             .Where(document => routeKeys.Contains($"{document.Owner}\n{document.Repo}"))
+            .ToList();
+
+        // The branches that have a wiki in the routed repositories, so a caller that asked for a branch
+        // without a wiki sees that the branch is missing rather than an empty search.
+        var availableBranches = routedDocuments
+            .Select(document => document.Branch)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (!string.IsNullOrWhiteSpace(normalizedBranch))
+        {
+            routedDocuments = routedDocuments
+                .Where(document => string.Equals(document.Branch, normalizedBranch, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        }
+
+        var branchMissing = !string.IsNullOrWhiteSpace(normalizedBranch) &&
+                            !availableBranches.Contains(normalizedBranch!, StringComparer.OrdinalIgnoreCase);
+
+        var scoredDocuments = routedDocuments
             .Select(document => ScoreDocument(document, tokens, normalizedQuery))
             .Where(IsRelevantMatch)
             .OrderByDescending(result => result.Score)
@@ -253,6 +277,11 @@ public class McpGlobalTools
         {
             query = normalizedQuery,
             language = normalizedLanguage,
+            branch = normalizedBranch,
+            availableBranches,
+            message = branchMissing
+                ? $"No wiki on branch {normalizedBranch} in the searched repositories; branches with a wiki: {(availableBranches.Count == 0 ? "none" : string.Join(", ", availableBranches))}"
+                : null,
             routedRepositories,
             count = scoredDocuments.Count,
             results = scoredDocuments
@@ -266,7 +295,7 @@ public class McpGlobalTools
         [Description("Repository name.")] string repo,
         [Description("Wiki document path returned by SearchDocs.")] string path,
         [Description("Preferred wiki language code. Default: zh. Pass empty to allow any language.")] string language = "zh",
-        [Description("Optional branch name. If omitted, the first matching processed branch is used.")] string? branch = null,
+        [Description("Optional branch name, for example dev or main. If omitted, the first matching processed branch is used; the result names the branch it read.")] string? branch = null,
         CancellationToken cancellationToken = default)
     {
         var normalizedOwner = Normalize(owner);
@@ -308,6 +337,29 @@ public class McpGlobalTools
 
         if (document == null)
         {
+            if (!string.IsNullOrWhiteSpace(normalizedBranch))
+            {
+                // Page paths differ between branch wikis, so name the branches that do have this path.
+                var branchesWithPath = (await LoadDocumentSearchRowsAsync(context, null, cancellationToken))
+                    .Where(item => string.Equals(item.Owner, normalizedOwner, StringComparison.OrdinalIgnoreCase) &&
+                                   string.Equals(item.Repo, normalizedRepo, StringComparison.OrdinalIgnoreCase) &&
+                                   string.Equals(item.Path, normalizedPath, StringComparison.OrdinalIgnoreCase))
+                    .Select(item => item.Branch)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                return ToJson(new
+                {
+                    error = true,
+                    branch = normalizedBranch,
+                    branchesWithPath,
+                    message = $"Document {normalizedOwner}/{normalizedRepo}:{normalizedPath} not found on branch {normalizedBranch}" +
+                              (branchesWithPath.Count == 0
+                                  ? "; no branch has this path, search that branch with SearchDocs and its branch parameter"
+                                  : $"; it exists on: {string.Join(", ", branchesWithPath)}")
+                });
+            }
+
             return ToJson(new
             {
                 error = true,

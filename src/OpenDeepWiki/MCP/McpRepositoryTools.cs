@@ -22,7 +22,7 @@ namespace OpenDeepWiki.MCP;
 [McpServerToolType]
 public class McpRepositoryTools
 {
-    [McpServerTool, Description("Search documentation within the current GitHub repository and return summarized insights.")]
+    [McpServerTool, Description("Search documentation within the current repository and return summarized insights. Each wiki belongs to one branch: pass branch to choose it; the result names the branch it searched.")]
     public static async Task<string> SearchDoc(
         IContext context,
         AgentFactory agentFactory,
@@ -32,6 +32,7 @@ public class McpRepositoryTools
         [Description("Search query or question to answer.")] string query,
         [Description("Maximum number of documents to return (default: 5, max: 20)")] int maxResults = 5,
         [Description("Language code (default: en)")] string language = "en",
+        [Description("Optional branch whose wiki to search, for example dev or main. Default: the repository's default branch.")] string? branch = null,
         CancellationToken cancellationToken = default)
     {
         var repositoryScopeError = ValidateAndResolveRepositoryScope(mcpServer, out var resolvedOwner, out var resolvedName);
@@ -56,22 +57,40 @@ public class McpRepositoryTools
         if (repository == null)
             return JsonSerializer.Serialize(new { error = true, message = $"Repository {resolvedOwner}/{resolvedName} not found" });
 
-        var branch = await context.RepositoryBranches
-            .FirstOrDefaultAsync(b => b.RepositoryId == repository.Id && !b.IsDeleted, cancellationToken);
+        // A repository can have a wiki per branch; pick the requested one, else the default branch,
+        // instead of whichever row the database returns first.
+        var branches = await context.RepositoryBranches
+            .Where(b => b.RepositoryId == repository.Id && !b.IsDeleted)
+            .ToListAsync(cancellationToken);
+        var requestedBranch = branch?.Trim();
+        var selectedBranch = !string.IsNullOrEmpty(requestedBranch)
+            ? branches.FirstOrDefault(b => string.Equals(b.BranchName, requestedBranch, StringComparison.OrdinalIgnoreCase))
+            : branches.FirstOrDefault(b => string.Equals(b.BranchName, repository.DefaultBranch, StringComparison.OrdinalIgnoreCase))
+              ?? branches.OrderBy(b => b.BranchName, StringComparer.OrdinalIgnoreCase).FirstOrDefault();
 
-        if (branch == null)
-            return JsonSerializer.Serialize(new { error = true, message = "No branch found for this repository" });
+        if (selectedBranch == null)
+        {
+            var names = string.Join(", ", branches.Select(b => b.BranchName).OrderBy(n => n, StringComparer.OrdinalIgnoreCase));
+            return JsonSerializer.Serialize(new
+            {
+                error = true,
+                branch = requestedBranch,
+                message = string.IsNullOrEmpty(requestedBranch)
+                    ? "No branch found for this repository"
+                    : $"No wiki on branch {requestedBranch}; branches with a wiki: {(names.Length == 0 ? "none" : names)}"
+            });
+        }
 
         var branchLanguage = await context.BranchLanguages
-            .FirstOrDefaultAsync(bl => bl.RepositoryBranchId == branch.Id &&
+            .FirstOrDefaultAsync(bl => bl.RepositoryBranchId == selectedBranch.Id &&
                                        bl.LanguageCode == language && !bl.IsDeleted, cancellationToken);
 
         if (branchLanguage == null)
-            return JsonSerializer.Serialize(new { error = true, message = $"No documentation in language '{language}'" });
+            return JsonSerializer.Serialize(new { error = true, branch = selectedBranch.BranchName, message = $"No documentation in language '{language}' on branch {selectedBranch.BranchName}" });
 
         var tools = new List<AITool>();
         var repoPath = RepositoryWorkspacePath.Resolve(
-            repoOptions.Value, resolvedOwner!, resolvedName!, branch.BranchName);
+            repoOptions.Value, resolvedOwner!, resolvedName!, selectedBranch.BranchName);
         if (Directory.Exists(repoPath))
         {
             try
@@ -144,6 +163,7 @@ public class McpRepositoryTools
 
         var results = matches.Select(m => new
         {
+            branch = selectedBranch.BranchName,
             title = m.Title,
             path = m.Path,
             matchLine = m.MatchLine,
@@ -153,7 +173,7 @@ public class McpRepositoryTools
         return JsonSerializer.Serialize(new
         {
             repository = $"{resolvedOwner}/{resolvedName}",
-            branch = branch.BranchName,
+            branch = selectedBranch.BranchName,
             language,
             query,
             matchCount = matches.Count,

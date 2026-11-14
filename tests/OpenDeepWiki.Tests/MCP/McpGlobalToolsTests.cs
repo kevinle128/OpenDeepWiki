@@ -250,6 +250,141 @@ public class McpGlobalToolsTests
         Assert.Contains("not found", root.GetProperty("message").GetString());
     }
 
+    [Fact]
+    public async Task SearchDocs_WithBranch_ShouldOnlySearchThatBranchWiki()
+    {
+        await using var context = TestDbContext.Create();
+        await SeedRepositoryAsync(
+            context, "repo-gateway", "vtc_blr", "blr-gateway", "Gateway", "en",
+            "User Connections", "runtime/user-connections", "websocket write error on main");
+        await SeedBranchAsync(
+            context, "repo-gateway", "dev", "en",
+            "User Connections (dev)", "runtime-architecture/user-connections", "websocket write error on dev");
+
+        var json = await McpGlobalTools.SearchDocs(
+            context, "websocket write error", "vtc_blr", "blr-gateway", "en", branch: "dev");
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
+        var results = root.GetProperty("results");
+
+        Assert.Equal("dev", root.GetProperty("branch").GetString());
+        Assert.Equal(1, results.GetArrayLength());
+        Assert.Equal("dev", results[0].GetProperty("branch").GetString());
+        Assert.Equal("runtime-architecture/user-connections", results[0].GetProperty("path").GetString());
+        Assert.Equal(["dev", "main"], root.GetProperty("availableBranches").EnumerateArray().Select(item => item.GetString()));
+        Assert.Equal(JsonValueKind.Null, root.GetProperty("message").ValueKind);
+    }
+
+    [Fact]
+    public async Task SearchDocs_WithoutBranch_ShouldNameTheBranchOfEachResult()
+    {
+        await using var context = TestDbContext.Create();
+        await SeedRepositoryAsync(
+            context, "repo-gateway", "vtc_blr", "blr-gateway", "Gateway", "en",
+            "User Connections", "runtime/user-connections", "websocket write error on main");
+        await SeedBranchAsync(
+            context, "repo-gateway", "dev", "en",
+            "User Connections (dev)", "runtime-architecture/user-connections", "websocket write error on dev");
+
+        var json = await McpGlobalTools.SearchDocs(context, "websocket write error", "vtc_blr", "blr-gateway", "en");
+        using var document = JsonDocument.Parse(json);
+        var branches = document.RootElement.GetProperty("results").EnumerateArray()
+            .Select(result => result.GetProperty("branch").GetString())
+            .OrderBy(name => name)
+            .ToList();
+
+        Assert.Equal(["dev", "main"], branches);
+    }
+
+    [Fact]
+    public async Task SearchDocs_WithBranchThatHasNoWiki_ShouldSayWhichBranchesHaveOne()
+    {
+        await using var context = TestDbContext.Create();
+        await SeedRepositoryAsync(
+            context, "repo-gateway", "vtc_blr", "blr-gateway", "Gateway", "en",
+            "User Connections", "runtime/user-connections", "websocket write error on main");
+
+        var json = await McpGlobalTools.SearchDocs(
+            context, "websocket write error", "vtc_blr", "blr-gateway", "en", branch: "dev");
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
+
+        Assert.Equal(0, root.GetProperty("count").GetInt32());
+        Assert.Contains("No wiki on branch dev", root.GetProperty("message").GetString());
+        Assert.Contains("main", root.GetProperty("message").GetString());
+    }
+
+    [Fact]
+    public async Task ReadDoc_WithBranchMissingThePath_ShouldNameTheBranchesThatHaveIt()
+    {
+        await using var context = TestDbContext.Create();
+        await SeedRepositoryAsync(
+            context, "repo-gateway", "vtc_blr", "blr-gateway", "Gateway", "en",
+            "User Connections", "runtime/user-connections", "main content");
+        await SeedBranchAsync(
+            context, "repo-gateway", "dev", "en",
+            "User Connections (dev)", "runtime-architecture/user-connections", "dev content");
+
+        var json = await McpGlobalTools.ReadDoc(
+            context, "vtc_blr", "blr-gateway", "runtime/user-connections", "en", branch: "dev");
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
+
+        Assert.True(root.GetProperty("error").GetBoolean());
+        Assert.Contains("not found on branch dev", root.GetProperty("message").GetString());
+        Assert.Equal(["main"], root.GetProperty("branchesWithPath").EnumerateArray().Select(item => item.GetString()));
+
+        var devJson = await McpGlobalTools.ReadDoc(
+            context, "vtc_blr", "blr-gateway", "runtime-architecture/user-connections", "en", branch: "dev");
+        using var devDocument = JsonDocument.Parse(devJson);
+        Assert.Equal("dev", devDocument.RootElement.GetProperty("branch").GetString());
+        Assert.Equal("dev content", devDocument.RootElement.GetProperty("content").GetString());
+    }
+
+    private static async Task SeedBranchAsync(
+        TestDbContext context,
+        string repositoryId,
+        string branchName,
+        string language,
+        string title,
+        string path,
+        string content)
+    {
+        var prefix = $"{repositoryId}-{branchName}";
+        context.RepositoryBranches.Add(new RepositoryBranch
+        {
+            Id = $"{prefix}-branch",
+            RepositoryId = repositoryId,
+            BranchName = branchName,
+            LastCommitId = "def456",
+            LastProcessedAt = DateTime.UtcNow
+        });
+        context.BranchLanguages.Add(new BranchLanguage
+        {
+            Id = $"{prefix}-language",
+            RepositoryBranchId = $"{prefix}-branch",
+            LanguageCode = language,
+            IsDefault = true
+        });
+        context.DocFiles.Add(new DocFile
+        {
+            Id = $"{prefix}-doc-file",
+            BranchLanguageId = $"{prefix}-language",
+            Content = content
+        });
+        context.DocCatalogs.Add(new DocCatalog
+        {
+            Id = $"{prefix}-catalog",
+            BranchLanguageId = $"{prefix}-language",
+            Title = title,
+            Path = path,
+            DocFileId = $"{prefix}-doc-file",
+            Order = 1
+        });
+
+        await context.SaveChangesAsync();
+    }
+
     private static async Task SeedRepositoryAsync(
         TestDbContext context,
         string repositoryId,
